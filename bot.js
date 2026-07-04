@@ -177,10 +177,12 @@ async function handlePost(page) {
   let categoryName = "긍정 문구";
   let title = "💡 [오늘의 명언] 긍정적인 하루를 시작하세요";
   let content = "오늘 하루도 작은 목표를 세우고 하나씩 달성해보는 건 어떨까요?\n\n여러분의 오늘 하루도 의미 있는 작은 성취들로 가득하길 응원합니다! 🙌";
+  // "동료 칭찬" 카테고리에서만 사용: 태그할 동료 이름 (긍정 문구일 땐 null 유지)
+  let taggedCoworker = null;
 
   if (day === 5) {
     categoryName = "동료 칭찬";
-    
+
     let selectedName = "동료";
     try {
       const fs = require('fs');
@@ -208,6 +210,7 @@ async function handlePost(page) {
       console.error('Error reading coworkers.txt:', fsError);
     }
 
+    taggedCoworker = selectedName;
     title = `${selectedName}을 칭찬합니다.`;
     content = `${selectedName}님과 함께 근무할 수 있어 무척 든든하고 행복합니다.\n` +
               `언제나 따뜻한 미소와 적극적인 배려로 동료들에게 큰 힘이 되어 주셔서 깊이 감사드립니다.\n\n` +
@@ -373,6 +376,79 @@ async function handlePost(page) {
     await titleInput.fill(title);
     console.log('Title filled successfully.');
 
+    // ── Step 2.5: Tag the co-worker (동료 칭찬 카테고리 전용, 필수 항목) ──
+    // "태그할 동료" 필드는 자동완성 방식이라 이름을 입력한 뒤 드롭다운 항목을 클릭해야 실제 태그가 됩니다.
+    // 이 필드를 채우지 않으면 등록이 유효성 검증에서 막힙니다.
+    if (taggedCoworker) {
+      console.log(`Tagging co-worker: ${taggedCoworker}...`);
+      const tagSelectors = [
+        'input[placeholder*="동료"]',
+        'input[placeholder*="태그"]',
+        'input[placeholder*="이름"]',
+        'input[placeholder*="검색"]',
+      ];
+
+      let tagInput = null;
+      for (const sel of tagSelectors) {
+        console.log(`Trying tag-coworker selector: ${sel}`);
+        const loc = page.locator(sel).first();
+        try {
+          await loc.waitFor({ state: 'visible', timeout: 5000 });
+          tagInput = loc;
+          console.log(`Found tag-coworker input with selector: ${sel}`);
+          break;
+        } catch {
+          console.log(`Tag selector ${sel} not found, trying next...`);
+        }
+      }
+
+      if (!tagInput) {
+        // 어떤 input들이 있는지 진단용으로 남김 — 태그 없이는 등록이 막히므로 명시적으로 실패 처리.
+        const inputsInfo = await page.locator('input').evaluateAll(
+          els => els.map(e => ({ placeholder: e.placeholder, name: e.name, type: e.type }))
+        ).catch(() => []);
+        console.log('Available inputs on page:', JSON.stringify(inputsInfo));
+        throw new Error('Could not find the "태그할 동료" input. 동료 칭찬 requires tagging a co-worker.');
+      }
+
+      // 이름을 입력하고 자동완성 드롭다운에서 정확히 일치하는 항목을 선택
+      await tagInput.click();
+      await tagInput.fill('');
+      await tagInput.type(taggedCoworker, { delay: 120 });
+      await page.waitForTimeout(1500);
+
+      const optionSelectors = [
+        `li:has-text("${taggedCoworker}")`,
+        `[role="option"]:has-text("${taggedCoworker}")`,
+        `div[class*="option"]:has-text("${taggedCoworker}")`,
+        `div[class*="item"]:has-text("${taggedCoworker}")`,
+        `ul li:has-text("${taggedCoworker}")`,
+      ];
+
+      let tagged = false;
+      for (const sel of optionSelectors) {
+        const opt = page.locator(sel).first();
+        try {
+          await opt.waitFor({ state: 'visible', timeout: 3000 });
+          await opt.click();
+          tagged = true;
+          console.log(`Selected co-worker from dropdown with selector: ${sel}`);
+          break;
+        } catch {
+          console.log(`Dropdown option selector ${sel} not found, trying next...`);
+        }
+      }
+
+      if (!tagged) {
+        // 드롭다운이 안 뜨는 경우 Enter로 확정 시도 (일부 태그 입력 UI는 Enter로 등록)
+        console.log('No dropdown option matched; trying Enter to confirm the tag...');
+        await tagInput.press('Enter');
+        await page.waitForTimeout(1000);
+      }
+
+      await page.waitForTimeout(1000);
+    }
+
     // ── Step 3: Fill the content ──
     console.log('Filling post content...');
     const contentSelectors = [
@@ -430,9 +506,34 @@ async function handlePost(page) {
       throw new Error('Could not find any submit button on the posting page.');
     }
 
+    const urlBeforeSubmit = page.url();
     await submitBtn.click();
-    await page.waitForTimeout(3000);
-    console.log('Post completed successfully!');
+    await page.waitForTimeout(4000);
+
+    // ── Step 5: Verify the post was actually created ──
+    // 등록 버튼 클릭만으로는 성공을 알 수 없음(필수 필드 누락 시 유효성 검증에서 막힘).
+    // 성공하면 보통 작성 페이지를 벗어나거나 폼이 사라짐 → 이를 확인해 조용한 실패를 잡아낸다.
+    const urlAfterSubmit = page.url();
+    const urlChanged = urlAfterSubmit !== urlBeforeSubmit;
+
+    // 작성 폼이 아직 그대로 남아 있으면(등록 버튼이 여전히 보임) 등록 실패로 간주
+    let formStillPresent = false;
+    try {
+      formStillPresent = await page.locator('button:has-text("등록하기")').first().isVisible({ timeout: 2000 });
+    } catch {
+      formStillPresent = false;
+    }
+
+    if (!urlChanged && formStillPresent) {
+      const bodyAfter = await page.locator('body').innerText().catch(() => '');
+      console.log('Page body text after submit (first 500 chars):', bodyAfter.substring(0, 500));
+      throw new Error(
+        'Post submission could not be verified: still on the write form after clicking 등록하기 ' +
+        '(likely a required field such as "태그할 동료" was rejected).'
+      );
+    }
+
+    console.log(`Post completed successfully! (url changed: ${urlChanged}, form gone: ${!formStillPresent})`);
   } catch (err) {
     console.log('Error during post submission:', err);
     throw err;
