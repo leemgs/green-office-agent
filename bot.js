@@ -286,7 +286,8 @@ async function handlePost(page) {
           const weekOfYear = Math.floor((kstDate - startOfYear) / (7 * 24 * 60 * 60 * 1000));
           const q = quotes[weekOfYear % quotes.length];
           const author = q.profile ? `${q.author} (${q.profile})` : q.author;
-          title = `💡 [오늘의 명언] ${q.author}의 한마디`;
+          // 저자가 사람이면 "○○의 한마디", 속담/격언 등이면 라벨만 표기
+          title = q.profile ? `💡 [오늘의 명언] ${q.author}의 한마디` : `💡 [오늘의 명언] ${q.author}`;
           content = `"${q.quote}"\n\n- ${author} -\n\n💬 의미: ${q.meaning}`;
           console.log(`Selected quote (week ${weekOfYear}): ${q.author}`);
         } else {
