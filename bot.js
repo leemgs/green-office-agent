@@ -19,6 +19,13 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// 연중 주차(week-of-year) 번호. 월·수·금 포스팅이 목록을 매주 순서대로 순환하도록
+// 인덱스를 정하는 데 사용된다 (list[getWeekOfYear(...) % list.length]).
+function getWeekOfYear(kstDate) {
+  const startOfYear = new Date(kstDate.getFullYear(), 0, 1);
+  return Math.floor((kstDate - startOfYear) / (7 * 24 * 60 * 60 * 1000));
+}
+
 async function readResponseBody(response) {
   const contentType = response.headers()['content-type'] || '';
 
@@ -252,9 +259,13 @@ async function handlePost(page) {
           .filter(name => name.length > 0);
           
         if (names.length > 0) {
-          const randomIndex = Math.floor(Math.random() * names.length);
-          selectedName = names[randomIndex];
-          console.log(`Selected co-worker for praise: ${selectedName}`);
+          // 월·수요일과 동일하게 연중 주차(week-of-year)로 순환 선택한다.
+          // 무작위(random)와 달리 목록을 한 바퀴 돌기 전까지 직전 주와 같은 사람이
+          // 다시 뽑히지 않으므로 "직전과 동일인 선택"이 구조적으로 방지된다.
+          const weekOfYear = getWeekOfYear(kstDate);
+          const rotationIndex = weekOfYear % names.length;
+          selectedName = names[rotationIndex];
+          console.log(`Selected co-worker for praise (week ${weekOfYear}): ${selectedName}`);
         } else {
           throw new Error('coworkers.txt is empty.');
         }
@@ -309,8 +320,7 @@ async function handlePost(page) {
           const tips = JSON.parse(fs.readFileSync(tipsFile, 'utf8'));
           if (Array.isArray(tips) && tips.length > 0) {
             // 연중 주차(week-of-year)로 인덱스를 정해 매주 다음 글이 순서대로 등록되도록 함
-            const startOfYear = new Date(kstDate.getFullYear(), 0, 1);
-            const weekOfYear = Math.floor((kstDate - startOfYear) / (7 * 24 * 60 * 60 * 1000));
+            const weekOfYear = getWeekOfYear(kstDate);
             const tip = tips[weekOfYear % tips.length];
             title = `💡 [알면 도움이 되는 생활 정보] ${tip.title}`;
             content = tip.content;
@@ -338,8 +348,7 @@ async function handlePost(page) {
         const quotes = JSON.parse(fs.readFileSync(quotesFile, 'utf8'));
         if (Array.isArray(quotes) && quotes.length > 0) {
           // 연중 주차(week-of-year)로 인덱스를 정해 매주 다음 명언이 순서대로 등록되도록 함
-          const startOfYear = new Date(kstDate.getFullYear(), 0, 1);
-          const weekOfYear = Math.floor((kstDate - startOfYear) / (7 * 24 * 60 * 60 * 1000));
+          const weekOfYear = getWeekOfYear(kstDate);
           const q = quotes[weekOfYear % quotes.length];
           const author = q.profile ? `${q.author} (${q.profile})` : q.author;
           // 저자가 사람이면 "○○의 한마디", 속담/격언 등이면 라벨만 표기
@@ -590,61 +599,68 @@ async function handlePost(page) {
     const urlBeforeSubmit = page.url();
     const postResponses = [];
     const dialogMessages = [];
-    let resolveDialog;
-    const dialogReceived = new Promise(resolve => {
-      resolveDialog = resolve;
-    });
     const responseListener = response => {
       if (response.request().method() === 'POST') postResponses.push(response);
     };
+    // 등록 시 사이트가 확인 대화상자(예: "등록하시겠습니까?")를 띄우는 경우가 있다.
+    // 이때 dismiss()로 닫으면 등록이 '취소'되어 작성 폼에 그대로 머무른다 —
+    // 이것이 이슈 #2(태그·내용이 모두 채워졌는데도 폼이 사라지지 않던 현상)의 실제 원인이다.
+    // (Playwright는 핸들러가 없으면 대화상자를 자동 dismiss 하므로 과거 실행도 동일하게 취소됨.)
+    // 따라서 accept()로 등록을 진행시킨다. alert 성격의 대화상자는 accept/dismiss 동작이 동일하다.
     const dialogListener = async dialog => {
       const message = dialog.message();
       dialogMessages.push(message);
       console.log(`Browser dialog after submit: type=${dialog.type()}, message="${message}"`);
-      await dialog.dismiss().catch(() => {});
-      resolveDialog();
+      await dialog.accept().catch(() => {});
     };
     page.on('response', responseListener);
     page.on('dialog', dialogListener);
 
+    // ── Step 5: 등록 성공 신호(주소 변경 또는 작성 폼 사라짐)를 최대 15초간 폴링 ──
+    // 확인 대화상자를 accept한 뒤 실제 네비게이션이 일어나는 시간까지 함께 기다린다.
+    // 등록 버튼 클릭만으로는 성공을 알 수 없으므로(필수 필드 누락·확인창 취소 시 폼에 그대로 남음)
+    // 이 신호를 확인해 조용한 실패를 잡아낸다.
+    let submitVerified = false;
     try {
       await submitBtn.click();
-      const submitOutcome = await Promise.race([
-        page.waitForURL(url => url.toString() !== urlBeforeSubmit, {
-          waitUntil: 'domcontentloaded',
-          timeout: 15000,
-        }).then(() => 'navigated'),
-        dialogReceived.then(() => 'dialog'),
-        page.waitForTimeout(15000).then(() => 'timeout'),
-      ]).catch(() => {});
 
-      // alert를 닫은 직후 React의 finally 블록이 제출 상태를 되돌릴 시간을 준다.
-      if (submitOutcome === 'dialog') {
-        await page.locator('button:has-text("등록하기")').first().waitFor({
-          state: 'visible',
-          timeout: 3000,
-        }).catch(() => {});
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (page.url() !== urlBeforeSubmit) {
+          submitVerified = true;
+          break;
+        }
+        const formGone = !(await page
+          .locator('button:has-text("등록하기")')
+          .first()
+          .isVisible()
+          .catch(() => false));
+        if (formGone) {
+          submitVerified = true;
+          break;
+        }
+        // 주 1회/일 1회 제한 안내가 뜬 경우, 이미 등록된 것으로 보고 성공 처리
+        if (dialogMessages.some(isAlreadyCompletedMessage)) {
+          submitVerified = true;
+          break;
+        }
+        await page.waitForTimeout(500);
       }
     } finally {
       page.off('response', responseListener);
       page.off('dialog', dialogListener);
     }
 
-    // ── Step 5: Verify the post was actually created ──
-    // 등록 버튼 클릭만으로는 성공을 알 수 없음(필수 필드 누락 시 유효성 검증에서 막힘).
-    // 성공하면 보통 작성 페이지를 벗어나거나 폼이 사라짐 → 이를 확인해 조용한 실패를 잡아낸다.
-    const urlAfterSubmit = page.url();
-    const urlChanged = urlAfterSubmit !== urlBeforeSubmit;
+    if (!submitVerified) {
+      const dialogError = dialogMessages.join(' | ');
+      // 제한 안내(주 1회 등)를 뒤늦게 확인한 경우에도 성공으로 간주
+      if (dialogError && isAlreadyCompletedMessage(dialogError)) {
+        console.log(
+          `Post was already completed for the allowed period; treating this rerun as successful: ${dialogError}`
+        );
+        return;
+      }
 
-    // 작성 폼이 아직 그대로 남아 있으면(등록 버튼이 여전히 보임) 등록 실패로 간주
-    let formStillPresent = false;
-    try {
-      formStillPresent = await page.locator('button:has-text("등록하기")').first().isVisible({ timeout: 2000 });
-    } catch {
-      formStillPresent = false;
-    }
-
-    if (!urlChanged && formStillPresent) {
       const bodyAfter = await page.locator('body').innerText().catch(() => '');
       const formError = await getVisibleFormError(page);
       const responseDetails = [];
@@ -661,16 +677,8 @@ async function handlePost(page) {
       );
       if (formError) console.log('Visible form error after submit:', formError);
 
-      const dialogError = dialogMessages.join(' | ');
-      if (dialogError && isAlreadyCompletedMessage(dialogError)) {
-        console.log(
-          `Post was already completed for the allowed period; treating this rerun as successful: ${dialogError}`
-        );
-        return;
-      }
-
       const diagnostic = [
-        dialogError ? `browser alert: ${dialogError}` : '',
+        dialogError ? `browser dialog: ${dialogError}` : '',
         formError ? `form error: ${formError}` : '',
         responseDetails.length > 0 ? `POST responses: ${responseDetails.join(' | ')}` : 'no POST response captured',
       ].filter(Boolean).join('; ');
@@ -679,7 +687,7 @@ async function handlePost(page) {
       );
     }
 
-    console.log(`Post completed successfully! (url changed: ${urlChanged}, form gone: ${!formStillPresent})`);
+    console.log('Post completed successfully!');
   } catch (err) {
     console.log('Error during post submission:', err);
     throw err;
@@ -691,4 +699,5 @@ module.exports = {
   // Exported for focused unit tests; browser workflow remains behind runBot.
   isAlreadyCompletedMessage,
   summarizeResponseBody,
+  getWeekOfYear,
 };

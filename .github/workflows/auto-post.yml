@@ -5,7 +5,7 @@ on:
     # 09:00 KST Monday, Wednesday, Friday = 00:00 UTC on Mon, Wed, Fri
     # - Mon: "긍정 문구" 카테고리로 오늘의 명언 + 의미 해설 포스팅 등록 (data/quotes.json에서 주차 순환 선택)
     # - Wed: "긍정 문구" 카테고리로 "오늘의 행복 한마디" 포스팅 등록 (행복 명언 API → 실패 시 data/life-tips.json 폴백)
-    # - Fri: "동료 칭찬" 카테고리로 "동료 칭찬(***을 칭찬합니다.)" 포스팅 등록 (data/coworkers.txt에서 무작위 선택)
+    # - Fri: "동료 칭찬" 카테고리로 "동료 칭찬(***을 칭찬합니다.)" 포스팅 등록 (data/coworkers.txt에서 주차 순환 선택)
     - cron: '0 0 * * 1,3,5'
   workflow_dispatch:
 
