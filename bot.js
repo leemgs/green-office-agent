@@ -278,7 +278,7 @@ async function handlePost(page) {
     }
 
     taggedCoworker = selectedName;
-    title = `${selectedName}을 칭찬합니다.`;
+    title = `${selectedName}님을 칭찬합니다.`;
     content = `${selectedName}님과 함께 근무할 수 있어 무척 든든하고 행복합니다.\n` +
               `언제나 따뜻한 미소와 적극적인 배려로 동료들에게 큰 힘이 되어 주셔서 깊이 감사드립니다.\n\n` +
               `우리 모두 서로 격려하고 고마움을 나누는 밝은 직장 분위기가 이어지길 바라며, ${selectedName}님의 행복한 하루를 응원합니다! 👍`;
