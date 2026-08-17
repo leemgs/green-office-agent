@@ -2,10 +2,10 @@ name: Auto Gacha
 
 on:
   schedule:
-    # 15:00 KST 매일 = 06:00 UTC 매일 (KST = UTC+9)
+    # 15:00 KST 평일(월~금) = 06:00 UTC 월~금 (KST = UTC+9, 시각이 같은 날이라 요일도 동일)
     # data/lottery.json에 등록한 물품의 당첨확률이 10% 이상이면 자동 응모(뽑기).
     # 1회 응모마다 물방울 30개가 차감됩니다.
-    - cron: '0 6 * * *'
+    - cron: '0 6 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +30,7 @@ jobs:
       - name: Install Playwright Browsers
         run: npx playwright install chromium
 
-      - name: Run Gacha (15:00 KST daily)
+      - name: Run Gacha (15:00 KST Mon-Fri)
         run: |
           set -o pipefail
           node index.js gacha 2>&1 | tee gacha.log
