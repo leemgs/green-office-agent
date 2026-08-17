@@ -254,9 +254,13 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 > 반드시 **Secrets** 탭에 등록해야 합니다. **Variables** 탭에 등록할 경우 보안상 위험하며, 일부 워크플로우에서 인식되지 않을 수 있습니다.
 
 ### Step 2: 스케줄 확인
-이미 `.github/workflows/auto.yml` 파일에 스케줄이 설정되어 있습니다.
-- **매일 오전 7시 (KST)**: 출석체크 수행
-- **매주 목요일 오전 10시 (KST)**: 유익한 식물 정보(예: 오렌지자스민 키우기) 자동 포스팅
+이미 다음 워크플로우 파일에 스케줄이 설정되어 있습니다. (모두 `workflow_dispatch`로 수동 실행도 가능합니다.)
+
+| 워크플로우 | 실행 시각 (KST) | cron (UTC) | 동작 |
+|-----------|-----------------|------------|------|
+| [`auto-attendance.yml`](.github/workflows/auto-attendance.yml) | 평일 오전 7시 | `0 22 * * 0-4` | 자동 출석체크 |
+| [`auto-post.yml`](.github/workflows/auto-post.yml) | 월·수·금 오전 9시 | `0 0 * * 1,3,5` | 요일별 자동 포스팅 |
+| [`auto-gacha.yml`](.github/workflows/auto-gacha.yml) | 매일 오후 3시 | `0 6 * * *` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
 
 ---
 
