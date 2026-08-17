@@ -1,0 +1,4 @@
+[
+  { "name": "이지블루", "minProbability": 10 },
+  { "name": "와인", "minProbability": 10 }
+]
