@@ -1,6 +1,6 @@
 # 🌿 그린메이커 자동화 봇 (Green Maker Auto Bot)
 
-이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 7시에는 자동 출석체크**를, **월·수·금 오전 9시에는 요일별 자동 포스팅**을 수행합니다.
+이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 7시에는 자동 출석체크**를, **월·수·금 오전 9시에는 요일별 자동 포스팅**을, **매일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다.
 
 ---
 
@@ -13,12 +13,14 @@ flowchart LR
     subgraph TRIGGER["⏰ 트리거 (GitHub Actions cron)"]
         A1["출석 워크플로우<br/>평일 07:00 KST"]
         A2["포스팅 워크플로우<br/>월·수·금 09:00 KST"]
+        A3["뽑기 워크플로우<br/>매일 15:00 KST"]
     end
 
     subgraph SRC["📚 콘텐츠 소스"]
         Q["data/quotes.json<br/>(명언 100개)"]
         L["data/life-tips.json<br/>(생활정보 100개)"]
         C["data/coworkers.txt<br/>(동료 명단)"]
+        LOT["data/lottery.json<br/>(응모 대상 물품)"]
         API["행복 명언 API<br/>(api.sobabear.com)"]
     end
 
@@ -26,8 +28,10 @@ flowchart LR
         LOGIN["🔐 로그인"]
         ATT["✅ 출석체크"]
         POST["📝 자동 포스팅"]
+        GACHA["🎯 물방울 뽑기<br/>(확률 10%↑ 조건부 응모)"]
         LOGIN --> ATT
         LOGIN --> POST
+        LOGIN --> GACHA
     end
 
     SITE["🌿 green-office.uk"]
@@ -35,20 +39,23 @@ flowchart LR
 
     A1 --> LOGIN
     A2 --> LOGIN
+    A3 --> LOGIN
     Q --> POST
     L --> POST
     C --> POST
     API --> POST
+    LOT --> GACHA
     ATT --> SITE
     POST --> SITE
+    GACHA --> SITE
     BOT -. 실행 실패 시 .-> ISSUE
 ```
 
 | 구성 요소 | 역할 | 관련 파일 |
 |-----------|------|-----------|
-| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml) |
-| **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅을 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
-| **콘텐츠 소스** | 요일별 포스팅 글감 (명언·생활정보·동료 명단·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt) |
+| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml) |
+| **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
+| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 (명언·생활정보·동료 명단·응모 물품·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
 | **실패 알림** | 실행 실패 시 상세 로그를 담아 자동 생성되는 GitHub Issue | (워크플로우의 `failure()` 단계) |
 
@@ -59,6 +66,40 @@ flowchart LR
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
 - **매일 자동 출석체크 (오전 7시)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다.
 - **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다.
+- **물방울 뽑기 조건부 자동 응모 (매일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
+
+---
+
+## 🎯 물방울 뽑기 자동 응모 방식
+
+매일 **오후 3시(KST)** 에 `/gacha` 페이지의 뽑기 카드를 확인하여, `data/lottery.json`에 등록한 물품 중 **현재 당첨확률이 기준(기본 10%) 이상**인 것만 자동으로 응모합니다. (관련 로직: [`bot.js`](bot.js)의 `handleGacha`, 스케줄: [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml))
+
+### 응모 대상 등록 (`data/lottery.json`)
+
+```json
+[
+  { "name": "이지블루", "minProbability": 10 },
+  { "name": "와인", "minProbability": 10 }
+]
+```
+
+- **`name`**: 뽑기 카드에 표시되는 물품 이름(부분 일치). 예) `이지블루`, `와인`
+- **`minProbability`** (선택): 이 물품을 응모할 최소 당첨확률(%). 생략하면 기본값 **10%** 가 적용됩니다.
+- 문자열만 적어도 됩니다. 예) `"와인"` → 기본 임계값 10% 적용.
+
+### 응모 판정 규칙
+
+| 상태 | 조건 | 동작 |
+|------|------|------|
+| `eligible` | 당첨확률 ≥ 기준(%) **그리고** 재고 있음 | ✅ 응모 (물방울 −30) |
+| `below_threshold` | 당첨확률 < 기준(%) | ⏭️ 건너뜀 |
+| `out_of_stock` | 재고 0개 | ⏭️ 건너뜀 |
+| `not_found` | 페이지에 해당 물품 카드 없음 | ⏭️ 건너뜀 |
+
+> [!NOTE]
+> - 당첨확률은 카드의 대표 확률만 읽습니다. 예) `당첨확률: 4.66% (+2.93%p 보너스)` → **4.66%** 로 판정 (괄호 안 보너스 `%p`는 무시).
+> - `오늘 남은 횟수`가 0이거나, 응모 중 **물방울 부족** 안내가 감지되면 즉시 중단합니다.
+> - 예시 화면 기준 `이지블루`의 당첨확률은 4.66%로 10% 미만이므로 응모되지 않으며, 확률이 10% 이상으로 오른 날에만 자동 응모됩니다.
 
 ---
 
@@ -183,11 +224,14 @@ SITE_URL=https://green-office.uk/
 
 ### 4. 실행 테스트
 ```bash
-# 자동 댓글 테스트
-node index.js comment
+# 자동 출석체크 테스트
+node index.js attendance
 
 # 자동 포스팅 테스트
 node index.js post
+
+# 물방울 뽑기(조건부 자동 응모) 테스트
+node index.js gacha
 ```
 
 ---

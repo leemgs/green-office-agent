@@ -1,0 +1,63 @@
+name: Auto Gacha
+
+on:
+  schedule:
+    # 15:00 KST 매일 = 06:00 UTC 매일 (KST = UTC+9)
+    # data/lottery.json에 등록한 물품의 당첨확률이 10% 이상이면 자동 응모(뽑기).
+    # 1회 응모마다 물방울 30개가 차감됩니다.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  gacha:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium
+
+      - name: Run Gacha (15:00 KST daily)
+        run: |
+          set -o pipefail
+          node index.js gacha 2>&1 | tee gacha.log
+        env:
+          USER_ID: ${{ secrets.USER_ID || vars.USER_ID }}
+          USER_PASSWORD: ${{ secrets.USER_PASSWORD || vars.USER_PASSWORD }}
+          SITE_URL: https://green-office.uk/
+
+      - name: Create Issue on Gacha Failure
+        if: failure()
+        run: |
+          KST_TIME=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M")
+          TITLE="🎯 자동 뽑기(응모) 실패 ($KST_TIME)"
+
+          echo "### ⚠️ 자동 뽑기(응모) 실패" > issue_body.md
+          echo "- **실행 시간 (KST):** $KST_TIME" >> issue_body.md
+          echo "- **실패 원인:** 뽑기 페이지 접근, 카드 조회, 또는 응모 처리 중 에러가 발생했습니다." >> issue_body.md
+          echo "" >> issue_body.md
+          echo "#### 📋 상세 실행 로그:" >> issue_body.md
+          echo "\`\`\`text" >> issue_body.md
+          if [ -f gacha.log ]; then
+            cat gacha.log >> issue_body.md
+          else
+            echo "로그 파일을 찾을 수 없습니다." >> issue_body.md
+          fi
+          echo "\`\`\`" >> issue_body.md
+
+          gh issue create --title "$TITLE" --body-file issue_body.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
