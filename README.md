@@ -1,6 +1,6 @@
 # 🌿 그린메이커 자동화 봇 (Green Maker Auto Bot)
 
-이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 7시에는 자동 출석체크**를, **월·수·금 오전 9시에는 요일별 자동 포스팅**을, **매일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다.
+이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 7시에는 자동 출석체크**를, **월·수·금 오전 9시에는 요일별 자동 포스팅**을, **평일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다.
 
 ---
 
@@ -13,7 +13,7 @@ flowchart LR
     subgraph TRIGGER["⏰ 트리거 (GitHub Actions cron)"]
         A1["출석 워크플로우<br/>평일 07:00 KST"]
         A2["포스팅 워크플로우<br/>월·수·금 09:00 KST"]
-        A3["뽑기 워크플로우<br/>매일 15:00 KST"]
+        A3["뽑기 워크플로우<br/>평일 15:00 KST"]
     end
 
     subgraph SRC["📚 콘텐츠 소스"]
@@ -66,13 +66,13 @@ flowchart LR
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
 - **매일 자동 출석체크 (오전 7시)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다.
 - **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다.
-- **물방울 뽑기 조건부 자동 응모 (매일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
+- **물방울 뽑기 조건부 자동 응모 (평일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
 
 ---
 
 ## 🎯 물방울 뽑기 자동 응모 방식
 
-매일 **오후 3시(KST)** 에 `/gacha` 페이지의 뽑기 카드를 확인하여, `data/lottery.json`에 등록한 물품 중 **현재 당첨확률이 기준(기본 10%) 이상**인 것만 자동으로 응모합니다. (관련 로직: [`bot.js`](bot.js)의 `handleGacha`, 스케줄: [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml))
+평일 **오후 3시(KST)** 에 `/gacha` 페이지의 뽑기 카드를 확인하여, `data/lottery.json`에 등록한 물품 중 **현재 당첨확률이 기준(기본 10%) 이상**인 것만 자동으로 응모합니다. (관련 로직: [`bot.js`](bot.js)의 `handleGacha`, 스케줄: [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml))
 
 ### 응모 대상 등록 (`data/lottery.json`)
 
@@ -260,7 +260,7 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 |-----------|-----------------|------------|------|
 | [`auto-attendance.yml`](.github/workflows/auto-attendance.yml) | 평일 오전 7시 | `0 22 * * 0-4` | 자동 출석체크 |
 | [`auto-post.yml`](.github/workflows/auto-post.yml) | 월·수·금 오전 9시 | `0 0 * * 1,3,5` | 요일별 자동 포스팅 |
-| [`auto-gacha.yml`](.github/workflows/auto-gacha.yml) | 매일 오후 3시 | `0 6 * * *` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
+| [`auto-gacha.yml`](.github/workflows/auto-gacha.yml) | 평일 오후 3시 | `0 6 * * 1-5` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
 
 ---
 
