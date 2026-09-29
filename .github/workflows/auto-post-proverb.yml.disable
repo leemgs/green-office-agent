@@ -1,0 +1,66 @@
+name: Auto Post - Proverb (Mon)
+
+on:
+  schedule:
+    # 09:00 KST 월요일 = 00:00 UTC Mon
+    # "긍정 문구" 카테고리로 오늘의 명언 + 의미 해설 포스팅 등록 (data/quotes.json에서 주차 순환 선택)
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+# NOTE: 실제 글감은 bot.js의 handlePost()가 KST 요일(getDay)로 판별한다.
+#   - 월요일 실행 → "긍정 문구(명언 + 해설)" 포스팅.
+#   - 따라서 이 파일은 월요일에만 스케줄링한다. (수동 실행 시에는 실행 당일 요일의 글이 등록됨에 유의)
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium
+
+      - name: Run Post - Proverb (09:00 KST Mon)
+        run: |
+          set -o pipefail
+          node index.js post 2>&1 | tee post.log
+        env:
+          USER_ID: ${{ secrets.USER_ID || vars.USER_ID }}
+          USER_PASSWORD: ${{ secrets.USER_PASSWORD || vars.USER_PASSWORD }}
+          SITE_URL: https://green-office.uk/
+
+      - name: Create Issue on Post Failure
+        if: failure()
+        run: |
+          KST_TIME=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M")
+          TITLE="📝 자동 포스팅 실패 - 명언(월) ($KST_TIME)"
+
+          echo "### ⚠️ 자동 포스팅 실패 - 명언(월)" > issue_body.md
+          echo "- **실행 시간 (KST):** $KST_TIME" >> issue_body.md
+          echo "- **실패 원인:** 포스팅 페이지 접근, 카테고리 선택, 또는 글 작성 중 에러가 발생했습니다." >> issue_body.md
+          echo "" >> issue_body.md
+          echo "#### 📋 상세 실행 로그:" >> issue_body.md
+          echo "\`\`\`text" >> issue_body.md
+          if [ -f post.log ]; then
+            cat post.log >> issue_body.md
+          else
+            echo "로그 파일을 찾을 수 없습니다." >> issue_body.md
+          fi
+          echo "\`\`\`" >> issue_body.md
+
+          gh issue create --title "$TITLE" --body-file issue_body.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
