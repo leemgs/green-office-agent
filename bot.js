@@ -70,7 +70,7 @@ function isAlreadyCompletedMessage(message) {
   ].some(pattern => pattern.test(message));
 }
 
-// ── 물방울 뽑기(gacha/lottery) 관련 상수·유틸 ──
+// ── 물방울 뽑기(lottery) 관련 상수·유틸 ──
 // data/lottery.json에 등록한 물품의 당첨확률이 임계값(기본 10%) 이상일 때만 자동 응모한다.
 // 한 번 응모(뽑기)할 때마다 물방울 30개가 차감된다.
 const DEFAULT_LOTTERY_THRESHOLD = 10; // 응모 기준 당첨확률(%). data/lottery.json에서 물품별로 재정의 가능.
@@ -78,14 +78,14 @@ const LOTTERY_DRAW_COST = 30; // 1회 뽑기당 차감되는 물방울 수.
 
 // 뽑기 카드 텍스트에서 "당첨확률"의 대표 확률(%)만 추출한다.
 // 예) "당첨확률: 4.66% (+2.93%p 보너스)" → 4.66 (괄호 안의 보너스 %p는 무시)
-function parseGachaProbability(text) {
+function parseLotteryProbability(text) {
   if (!text) return null;
   const match = text.match(/당첨\s*확률[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*%/);
   return match ? parseFloat(match[1]) : null;
 }
 
 // 뽑기 카드 텍스트에서 "재고" 수량을 추출한다. 예) "재고: 2개" → 2
-function parseGachaStock(text) {
+function parseLotteryStock(text) {
   if (!text) return null;
   const match = text.match(/재고[^0-9]*([0-9]+)/);
   return match ? parseInt(match[1], 10) : null;
@@ -143,8 +143,8 @@ function planLotteryDraws(cards, targets) {
     const card = cards.find(c => (c.text || '').includes(name));
     if (!card) return { name, minProbability, status: 'not_found' };
 
-    const probability = parseGachaProbability(card.text);
-    const stock = parseGachaStock(card.text);
+    const probability = parseLotteryProbability(card.text);
+    const stock = parseLotteryStock(card.text);
     const base = { name, minProbability, index: card.index, probability, stock };
 
     if (probability == null) return { ...base, status: 'no_probability' };
@@ -234,8 +234,8 @@ async function runBot(mode = 'attendance') {
       await handleAttendance(page);
     } else if (mode === 'post') {
       await handlePost(page);
-    } else if (mode === 'gacha') {
-      await handleGacha(page);
+    } else if (mode === 'lottery') {
+      await handleLottery(page);
     }
 
   } catch (error) {
@@ -804,9 +804,9 @@ function loadLotteryTargets() {
   }
 }
 
-// 뽑기 페이지의 각 카드 정보를 수집하고, 카드별 "뽑기" 버튼에 data-gacha-index 속성을 부여한다.
+// 뽑기 페이지의 각 카드 정보를 수집하고, 카드별 "뽑기" 버튼에 data-lottery-index 속성을 부여한다.
 // (버튼에 인덱스를 심어두면, 순수 계산으로 고른 대상을 Playwright로 정확히 클릭할 수 있다.)
-async function collectGachaCards(page) {
+async function collectLotteryCards(page) {
   return page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll('button'))
       .filter(btn => /뽑기/.test(btn.textContent || ''));
@@ -821,7 +821,7 @@ async function collectGachaCards(page) {
         el = el.parentElement;
       }
       const source = card || btn;
-      btn.setAttribute('data-gacha-index', String(i));
+      btn.setAttribute('data-lottery-index', String(i));
       cards.push({
         index: i,
         text: (source.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -832,8 +832,8 @@ async function collectGachaCards(page) {
 }
 
 // 특정 카드의 "뽑기" 버튼을 클릭해 1회 응모한다. 응모 성공 여부와 사이트 메시지를 반환한다.
-async function drawGachaCard(page, index) {
-  const btn = page.locator(`button[data-gacha-index="${index}"]`).first();
+async function drawLotteryCard(page, index) {
+  const btn = page.locator(`button[data-lottery-index="${index}"]`).first();
 
   try {
     await btn.waitFor({ state: 'visible', timeout: 5000 });
@@ -875,8 +875,9 @@ async function drawGachaCard(page, index) {
   return { success: true, message: combined };
 }
 
-async function handleGacha(page) {
-  console.log('Navigating to gacha (물방울 뽑기) page...');
+async function handleLottery(page) {
+  console.log('Navigating to lottery (물방울 뽑기) page...');
+  // NOTE: '/gacha'는 사이트(green-office.uk)의 실제 페이지 경로라 그대로 유지한다.
   await page.goto(`${SITE_URL}gacha`, { waitUntil: 'networkidle', timeout: 30000 });
 
   // Next.js CSR 페이지 — React 마운트를 기다린다.
@@ -901,11 +902,11 @@ async function handleGacha(page) {
     return;
   }
 
-  const cards = await collectGachaCards(page);
-  console.log(`Found ${cards.length} gacha card(s).`);
+  const cards = await collectLotteryCards(page);
+  console.log(`Found ${cards.length} lottery card(s).`);
   if (cards.length === 0) {
     console.log('Page body text (first 500 chars):', pageText.substring(0, 500));
-    throw new Error('GACHA_NO_CARDS: 뽑기 카드를 찾을 수 없습니다.');
+    throw new Error('LOTTERY_NO_CARDS: 뽑기 카드를 찾을 수 없습니다.');
   }
 
   const plan = planLotteryDraws(cards, targets);
@@ -929,7 +930,7 @@ async function handleGacha(page) {
       `- ${entry.name}: entering lottery ` +
       `(당첨확률 ${entry.probability}% >= 기준 ${entry.minProbability}%), 물방울 -${LOTTERY_DRAW_COST} 예상`
     );
-    const result = await drawGachaCard(page, entry.index);
+    const result = await drawLotteryCard(page, entry.index);
     if (result.success) {
       drawn++;
       if (remaining != null) remaining -= 1;
@@ -945,7 +946,7 @@ async function handleGacha(page) {
     await page.waitForTimeout(1500);
   }
 
-  console.log(`Gacha finished. Draws performed: ${drawn} (물방울 약 ${drawn * LOTTERY_DRAW_COST} 차감).`);
+  console.log(`Lottery finished. Draws performed: ${drawn} (물방울 약 ${drawn * LOTTERY_DRAW_COST} 차감).`);
 }
 
 module.exports = {
@@ -954,9 +955,9 @@ module.exports = {
   isAlreadyCompletedMessage,
   summarizeResponseBody,
   getWeekOfYear,
-  // 물방울 뽑기(gacha) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
-  parseGachaProbability,
-  parseGachaStock,
+  // 물방울 뽑기(lottery) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
+  parseLotteryProbability,
+  parseLotteryStock,
   parseRemainingDraws,
   isInsufficientDropletMessage,
   normalizeLotteryTargets,

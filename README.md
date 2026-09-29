@@ -28,10 +28,10 @@ flowchart LR
         LOGIN["🔐 로그인"]
         ATT["✅ 출석체크"]
         POST["📝 자동 포스팅"]
-        GACHA["🎯 물방울 뽑기<br/>(확률 10%↑ 조건부 응모)"]
+        LOTTERY["🎯 물방울 뽑기<br/>(확률 10%↑ 조건부 응모)"]
         LOGIN --> ATT
         LOGIN --> POST
-        LOGIN --> GACHA
+        LOGIN --> LOTTERY
     end
 
     SITE["🌿 green-office.uk"]
@@ -44,16 +44,16 @@ flowchart LR
     L --> POST
     C --> POST
     API --> POST
-    LOT --> GACHA
+    LOT --> LOTTERY
     ATT --> SITE
     POST --> SITE
-    GACHA --> SITE
+    LOTTERY --> SITE
     BOT -. 실행 실패 시 .-> ISSUE
 ```
 
 | 구성 요소 | 역할 | 관련 파일 |
 |-----------|------|-----------|
-| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml) |
+| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
 | **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 (명언·생활정보·동료 명단·응모 물품·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
@@ -72,7 +72,7 @@ flowchart LR
 
 ## 🎯 물방울 뽑기 자동 응모 방식
 
-평일 **오후 3시(KST)** 에 `/gacha` 페이지의 뽑기 카드를 확인하여, `data/lottery.json`에 등록한 물품 중 **현재 당첨확률이 기준(기본 10%) 이상**인 것만 자동으로 응모합니다. (관련 로직: [`bot.js`](bot.js)의 `handleGacha`, 스케줄: [`.github/workflows/auto-gacha.yml`](.github/workflows/auto-gacha.yml))
+평일 **오후 3시(KST)** 에 `/gacha` 페이지의 뽑기 카드를 확인하여, `data/lottery.json`에 등록한 물품 중 **현재 당첨확률이 기준(기본 10%) 이상**인 것만 자동으로 응모합니다. (관련 로직: [`bot.js`](bot.js)의 `handleLottery`, 스케줄: [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml))
 
 ### 응모 대상 등록 (`data/lottery.json`)
 
@@ -231,7 +231,7 @@ node index.js attendance
 node index.js post
 
 # 물방울 뽑기(조건부 자동 응모) 테스트
-node index.js gacha
+node index.js lottery
 ```
 
 ---
@@ -260,7 +260,7 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 |-----------|-----------------|------------|------|
 | [`auto-attendance.yml`](.github/workflows/auto-attendance.yml) | 평일 오전 7시 | `0 22 * * 0-4` | 자동 출석체크 |
 | [`auto-post.yml`](.github/workflows/auto-post.yml) | 월·수·금 오전 9시 | `0 0 * * 1,3,5` | 요일별 자동 포스팅 |
-| [`auto-gacha.yml`](.github/workflows/auto-gacha.yml) | 평일 오후 3시 | `0 6 * * 1-5` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
+| [`auto-lottery.yml`](.github/workflows/auto-lottery.yml) | 평일 오후 3시 | `0 6 * * 1-5` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
 
 ---
 
