@@ -5,8 +5,8 @@ const {
   isAlreadyCompletedMessage,
   summarizeResponseBody,
   getWeekOfYear,
-  parseGachaProbability,
-  parseGachaStock,
+  parseLotteryProbability,
+  parseLotteryStock,
   parseRemainingDraws,
   isInsufficientDropletMessage,
   normalizeLotteryTargets,
@@ -49,19 +49,19 @@ test('week rotation never picks the same co-worker two weeks in a row', () => {
   }
 });
 
-// ── 물방울 뽑기(gacha/lottery) 유틸 테스트 ──
+// ── 물방울 뽑기(lottery) 유틸 테스트 ──
 
-test('parseGachaProbability reads the headline % and ignores the bonus %p', () => {
-  assert.equal(parseGachaProbability('당첨확률: 4.66% (+2.93%p 보너스)'), 4.66);
-  assert.equal(parseGachaProbability('당첨확률: 3.96% (+3.19%p 보너스)'), 3.96);
-  assert.equal(parseGachaProbability('당첨확률 12% 재고: 1개'), 12);
-  assert.equal(parseGachaProbability('확률 정보 없음'), null);
+test('parseLotteryProbability reads the headline % and ignores the bonus %p', () => {
+  assert.equal(parseLotteryProbability('당첨확률: 4.66% (+2.93%p 보너스)'), 4.66);
+  assert.equal(parseLotteryProbability('당첨확률: 3.96% (+3.19%p 보너스)'), 3.96);
+  assert.equal(parseLotteryProbability('당첨확률 12% 재고: 1개'), 12);
+  assert.equal(parseLotteryProbability('확률 정보 없음'), null);
 });
 
-test('parseGachaStock and parseRemainingDraws read counts', () => {
-  assert.equal(parseGachaStock('재고: 2개'), 2);
-  assert.equal(parseGachaStock('재고: 0개'), 0);
-  assert.equal(parseGachaStock('재고 없음 표기'), null);
+test('parseLotteryStock and parseRemainingDraws read counts', () => {
+  assert.equal(parseLotteryStock('재고: 2개'), 2);
+  assert.equal(parseLotteryStock('재고: 0개'), 0);
+  assert.equal(parseLotteryStock('재고 없음 표기'), null);
   assert.deepEqual(parseRemainingDraws('오늘 남은 횟수: 3/3'), { remaining: 3, total: 3 });
   assert.deepEqual(parseRemainingDraws('남은 횟수 0 / 3'), { remaining: 0, total: 3 });
   assert.equal(parseRemainingDraws('횟수 정보 없음'), null);
