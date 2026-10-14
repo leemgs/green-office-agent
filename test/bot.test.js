@@ -12,7 +12,24 @@ const {
   normalizeLotteryTargets,
   planLotteryDraws,
   DEFAULT_LOTTERY_THRESHOLD,
+  isWithinAttendanceWindow,
 } = require('../bot');
+
+// ── 출석 시간창(평일 06:00~11:00 KST) 판별 테스트 ──
+// 2026-10-12=월, 10-13=화, 10-10=토, 10-11=일. Date는 KST 벽시계로 간주한다.
+test('isWithinAttendanceWindow accepts weekday 06:00~10:59 and rejects the rest', () => {
+  // 평일 창 안
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 12, 6, 0)), true);   // 월 06:00 (창 시작)
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 12, 8, 30)), true);  // 월 08:30
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 12, 10, 59)), true); // 월 10:59
+  // 평일 창 밖
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 12, 5, 59)), false); // 월 05:59 (창 전)
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 12, 11, 0)), false); // 월 11:00 (경계 제외)
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 13, 11, 46)), false);// 화 11:46 (실제 실패 케이스)
+  // 주말은 시간과 무관하게 불가
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 10, 8, 0)), false);  // 토 08:00
+  assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 11, 8, 0)), false);  // 일 08:00
+});
 
 test('weekly and daily limit alerts are recognized as idempotent reruns', () => {
   assert.equal(isAlreadyCompletedMessage('동료 칭찬은 주 1회만 작성할 수 있습니다.'), true);
