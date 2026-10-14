@@ -26,6 +26,29 @@ function getWeekOfYear(kstDate) {
   return Math.floor((kstDate - startOfYear) / (7 * 24 * 60 * 60 * 1000));
 }
 
+// 현재 시각을 KST 벽시계(wall-clock) 기준 Date로 반환한다.
+// (반환된 Date의 getDay()/getHours()가 한국 시간 기준 값이 되도록 변환)
+function getKstNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+}
+
+// 출석 가능 시간대(평일 06:00~11:00 KST) 안인지 판별한다. (순수 함수 → 단위 테스트 가능)
+// 사이트가 이 창 밖에서는 "출석 가능 시간은 평일 오전 6시~11시입니다"로 거부한다.
+// 11:00 정각은 경계 거부 위험이 있어 제외([06:00, 11:00)).
+function isWithinAttendanceWindow(kstDate) {
+  const day = kstDate.getDay();     // 0:일 ~ 6:토
+  const hour = kstDate.getHours();  // KST 기준 0~23
+  const isWeekday = day >= 1 && day <= 5;
+  return isWeekday && hour >= 6 && hour < 11;
+}
+
+// KST Date를 "HH:MM" 문자열로 포맷한다. (로그 표기용)
+function formatKstHm(kstDate) {
+  const hh = String(kstDate.getHours()).padStart(2, '0');
+  const mm = String(kstDate.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 async function readResponseBody(response) {
   const contentType = response.headers()['content-type'] || '';
 
@@ -247,19 +270,52 @@ async function runBot(mode = 'attendance') {
   }
 }
 
+const ATTENDANCE_REJECTION_MESSAGE = '출석 가능 시간은 평일 오전 6시~11시입니다';
+
+// 사이트의 시간대 거부(출석 창 밖)를 감지했을 때의 처리.
+// - 지금이 창 밖(지연 실행 등)이면: 하드 실패가 아니라 건너뛸 상황이므로 true 반환 → 호출부에서 조용히 return.
+//   (GitHub Actions 예약 실행 지연으로 창을 넘긴 '뒤늦은' 실행이 여기에 해당. 같은 날 창 안의 다른 예약 실행이 출석을 처리한다.)
+// - 지금이 창 안인데도 거부되면: 사이트의 출석 가능 시간이 바뀐 것일 수 있으므로 throw → 이슈로 알린다.
+function handleAttendanceTimeRejection(context) {
+  const kstNow = getKstNow();
+  if (!isWithinAttendanceWindow(kstNow)) {
+    console.log(
+      `출석 창(평일 06:00~11:00 KST)을 벗어난 시각(현재 KST ${formatKstHm(kstNow)})에 사이트가 거부했습니다. ` +
+      `예약 실행 지연으로 보고 건너뜁니다. (${context})`
+    );
+    return true; // graceful skip
+  }
+  const errorMsg =
+    `ATTENDANCE_TIME_REJECTED: 창 안(현재 KST ${formatKstHm(kstNow)})인데도 사이트가 거부했습니다. ` +
+    `사이트의 출석 가능 시간이 변경됐을 수 있습니다. 메시지: "${ATTENDANCE_REJECTION_MESSAGE}" (${context})`;
+  console.error(errorMsg);
+  throw new Error(errorMsg);
+}
+
 async function handleAttendance(page) {
-  console.log('Navigating to attendance page...');
+  // ── Guard: 출석 가능 시간대인지 먼저 확인 ──
+  // GitHub Actions 예약 실행은 수십 분~수 시간 지연될 수 있어, 창(평일 06:00~11:00 KST)을
+  // 벗어난 시각에 실행되기도 한다. 창 밖이면 어차피 사이트가 거부하므로, 불필요한 시도·
+  // 하드 실패(이슈 생성) 대신 조용히 건너뛴다. (창 안에 예약된 다른 실행이 출석을 처리)
+  const kstNow = getKstNow();
+  if (!isWithinAttendanceWindow(kstNow)) {
+    console.log(
+      `출석 가능 시간(평일 06:00~11:00 KST)이 아니므로 건너뜁니다. 현재 KST: ${formatKstHm(kstNow)}. ` +
+      `(예약 실행 지연으로 보이며, 창 안의 다른 예약 실행이 출석을 처리합니다.)`
+    );
+    return;
+  }
+
+  console.log(`Navigating to attendance page... (현재 KST ${formatKstHm(kstNow)})`);
   await page.goto(`${SITE_URL}attendance`);
   await page.waitForTimeout(3000);
 
   // ── Check for time-restriction rejection ──
   // The site rejects attendance outside weekdays 06:00-11:00 KST with this message.
   const bodyText = await page.locator('body').innerText();
-  const rejectionMessage = '출석 가능 시간은 평일 오전 6시~11시입니다';
+  const rejectionMessage = ATTENDANCE_REJECTION_MESSAGE;
   if (bodyText.includes(rejectionMessage)) {
-    const errorMsg = `ATTENDANCE_TIME_REJECTED: 출석이 거부되었습니다. 사이트 메시지: "${rejectionMessage}"`;
-    console.error(errorMsg);
-    throw new Error(errorMsg);
+    if (handleAttendanceTimeRejection('페이지 로드 직후')) return;
   }
 
   // ── Check if already checked in ──
@@ -301,11 +357,11 @@ async function handleAttendance(page) {
   await page.waitForTimeout(3000);
 
   // ── Verify after submit — check for late rejection ──
+  // 제출 사이에 11:00을 넘겨(경계 레이스) 거부될 수 있다. 이때도 창 밖이면 건너뛰고,
+  // 창 안인데 거부되면 사이트 시간 변경 의심으로 알린다.
   const afterText = await page.locator('body').innerText();
   if (afterText.includes(rejectionMessage)) {
-    const errorMsg = `ATTENDANCE_TIME_REJECTED: 출석 제출 후 거부되었습니다. 사이트 메시지: "${rejectionMessage}"`;
-    console.error(errorMsg);
-    throw new Error(errorMsg);
+    if (handleAttendanceTimeRejection('출석 제출 후')) return;
   }
 
   console.log('Attendance completed successfully.');
@@ -955,6 +1011,9 @@ module.exports = {
   isAlreadyCompletedMessage,
   summarizeResponseBody,
   getWeekOfYear,
+  // 출석 시간창 판별 순수 유틸 — 브라우저 없이 단위 테스트 가능.
+  isWithinAttendanceWindow,
+  ATTENDANCE_REJECTION_MESSAGE,
   // 물방울 뽑기(lottery) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
   parseLotteryProbability,
   parseLotteryStock,
