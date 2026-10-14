@@ -271,5 +271,10 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 
 ---
 
+## 🤝 기여
+기여 방법과 커밋 규칙(**DCO `Signed-off-by` 서명 필수**)은 [`CONTRIBUTING.md`](CONTRIBUTING.md)를 참고하세요.
+
+---
+
 ## 📄 라이선스
 MIT License
