@@ -19,6 +19,8 @@ const {
   getAttendanceSkipReason,
   getHolidaySkipReason,
   HOLIDAY_SKIP_ACTIVITIES,
+  countPostingFridays,
+  pickCoworkerForDate,
 } = require('../bot');
 
 const holidays = require('../data/holidays.json');
@@ -108,19 +110,55 @@ test('week-of-year advances by one each week and starts at 0', () => {
   assert.equal(getWeekOfYear(new Date(2026, 0, 15)), 2);
 });
 
-test('week rotation never picks the same co-worker two weeks in a row', () => {
-  // 금요일 동료 선택은 list[getWeekOfYear % list.length] 로 순환한다.
-  // 목록이 2명 이상이면 연속한 두 주의 인덱스가 절대 같지 않아 직전과 동일인이 뽑히지 않는다.
-  const names = ['강동욱', '구민수', '김명유', '김희진', '서준수'];
-  let prevIndex = null;
-  // 연속 60주를 검증 (목록을 여러 바퀴 돌아도 인접 주 중복이 없어야 함)
-  for (let week = 0; week < 60; week++) {
-    const index = week % names.length;
-    if (prevIndex !== null) {
-      assert.notEqual(index, prevIndex, `week ${week} repeated the previous pick`);
-    }
-    prevIndex = index;
+// ── 동료 칭찬 순번 (공휴일 금요일은 순번을 소모하지 않음) ──
+const coworkerNames = ['강동욱', '구민수', '김명유', '김희진', '서준수'];
+const rotationAnchor = { anchorDate: '2026-10-16', anchorName: '김명유' };
+const fri = iso => new Date(`${iso}T09:00:00`);
+
+test('countPostingFridays counts only non-holiday Fridays after the anchor', () => {
+  assert.equal(countPostingFridays('2026-10-16', fri('2026-10-16'), holidays), 0);
+  assert.equal(countPostingFridays('2026-10-16', fri('2026-10-23'), holidays), 1);
+  // 12/25(성탄절)·1/1(신정) 금요일은 세지 않음: 10/23~12/18 = 9회, 1/8 = 10회
+  assert.equal(countPostingFridays('2026-10-16', fri('2026-12-18'), holidays), 9);
+  assert.equal(countPostingFridays('2026-10-16', fri('2027-01-08'), holidays), 10);
+  // 기준일 이전 날짜는 음수
+  assert.equal(countPostingFridays('2026-10-16', fri('2026-10-02'), holidays), -1); // 10/9 한글날 제외
+});
+
+test('a holiday Friday does not skip anyone: the next Friday gets that turn', () => {
+  const pick = iso => pickCoworkerForDate(fri(iso), coworkerNames, holidays, rotationAnchor).name;
+  assert.equal(pick('2026-10-16'), '김명유'); // 기준
+  assert.equal(pick('2026-10-23'), '김희진');
+  // 12/18 다음 포스팅 금요일은 12/25·1/1(공휴일)을 건너뛴 1/8 → 바로 다음 사람
+  const before = coworkerNames.indexOf(pick('2026-12-18'));
+  assert.equal(pick('2027-01-08'), coworkerNames[(before + 1) % coworkerNames.length]);
+});
+
+test('rotation visits everyone in order across holidays and year boundaries', () => {
+  // 2026-10-16부터 2년간의 '포스팅 금요일'을 순서대로 모아, 순번이 목록 순서를 정확히 따르는지 확인
+  const picks = [];
+  for (let d = fri('2026-10-16'); d < fri('2028-10-16'); d = new Date(d.getTime() + 7 * 864e5)) {
+    if (holidays[formatKstDate(d)]) continue; // 공휴일은 포스팅 안 함
+    picks.push(pickCoworkerForDate(d, coworkerNames, holidays, rotationAnchor).name);
   }
+  const start = coworkerNames.indexOf('김명유');
+  picks.forEach((name, i) => {
+    assert.equal(name, coworkerNames[(start + i) % coworkerNames.length], `posting #${i}`);
+  });
+});
+
+test('missing anchor name falls back to the first person in the list', () => {
+  const pick = pickCoworkerForDate(fri('2026-10-16'), coworkerNames, holidays, { anchorDate: '2026-10-16', anchorName: '퇴사자' });
+  assert.equal(pick.name, '강동욱');
+});
+
+test('data/coworker-rotation.json anchor exists in data/coworkers.txt', () => {
+  const fs = require('fs');
+  const rotation = require('../data/coworker-rotation.json');
+  const names = fs.readFileSync(require('path').join(__dirname, '..', 'data', 'coworkers.txt'), 'utf8')
+    .split(/\r?\n/).map(n => n.trim()).filter(Boolean);
+  assert.match(rotation.anchorDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(names.includes(rotation.anchorName), `${rotation.anchorName} not in coworkers.txt`);
 });
 
 // ── 물방울 뽑기(lottery) 유틸 테스트 ──

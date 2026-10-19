@@ -71,6 +71,19 @@ function loadHolidays() {
   }
 }
 
+// data/coworker-rotation.json({ anchorDate, anchorName })을 읽는다. 동료 칭찬 순번의 기준점.
+function loadCoworkerRotation() {
+  const fs = require('fs');
+  const path = require('path');
+  const rotationFile = path.join(__dirname, 'data', 'coworker-rotation.json');
+  try {
+    return JSON.parse(fs.readFileSync(rotationFile, 'utf8'));
+  } catch (err) {
+    console.warn(`coworker-rotation.json을 읽지 못했습니다(${err.message}). 목록 첫 사람을 기준으로 합니다.`);
+    return { anchorDate: null, anchorName: null };
+  }
+}
+
 // 해당 날짜가 공휴일이면 이름을, 아니면 null을 반환한다. (순수 함수 → 단위 테스트 가능)
 function getHolidayName(kstDate, holidays) {
   return (holidays && holidays[formatKstDate(kstDate)]) || null;
@@ -109,6 +122,64 @@ function getAttendanceSkipReason(kstDate, holidays) {
     );
   }
   return null;
+}
+
+// ── 동료 칭찬 순번 ──
+// 매주 금요일 동료 칭찬은 data/coworkers.txt를 순서대로 한 명씩 돈다.
+// 과거에는 연중 주차(week-of-year)로 골라서 (1) 공휴일 금요일에 포스팅을 건너뛰면 그 주 차례인
+// 동료가 영영 빠지고, (2) 매년 1월 주차가 0으로 돌아가며 목록 뒷부분 동료들이 빠졌다.
+// 그래서 '기준일(anchorDate)에 칭찬한 동료(anchorName)'부터 **실제로 포스팅하는 금요일
+// (공휴일이 아닌 금요일)만** 세어 다음 사람을 정한다. 상태 저장 없이 날짜만으로 결정되며,
+// 공휴일 금요일은 순번을 소모하지 않으므로 그 주 차례인 동료는 다음 금요일로 넘어간다.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// KST 벽시계 Date 또는 "YYYY-MM-DD" 문자열을 시간대와 무관한 '일(day) 번호'로 변환한다.
+function toDayNumber(dateOrString) {
+  if (typeof dateOrString === 'string') {
+    const [y, m, d] = dateOrString.split('-').map(Number);
+    return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
+  }
+  return Math.round(
+    Date.UTC(dateOrString.getFullYear(), dateOrString.getMonth(), dateOrString.getDate()) / DAY_MS
+  );
+}
+
+// 일 번호 → "YYYY-MM-DD"
+function dayNumberToIso(dayNumber) {
+  return new Date(dayNumber * DAY_MS).toISOString().slice(0, 10);
+}
+
+// 공휴일이 아닌 금요일(=동료 칭찬을 실제로 포스팅하는 날)인지
+function isPostingFriday(dayNumber, holidays) {
+  const isFriday = (dayNumber + 4) % 7 === 5; // 1970-01-01(일 번호 0)은 목요일
+  return isFriday && !(holidays && holidays[dayNumberToIso(dayNumber)]);
+}
+
+// 기준일에서 대상일까지 '포스팅하는 금요일'이 몇 번 지나갔는지(부호 있음) 센다.
+//   대상일이 기준일 이후면 (기준일, 대상일] 구간의 포스팅 금요일 수,
+//   이전이면 -(대상일, 기준일] 구간의 포스팅 금요일 수.
+function countPostingFridays(anchorDate, kstDate, holidays) {
+  const anchor = toDayNumber(anchorDate);
+  const target = toDayNumber(kstDate);
+  const [from, to, sign] = target >= anchor ? [anchor, target, 1] : [target, anchor, -1];
+  let count = 0;
+  for (let day = from + 1; day <= to; day++) {
+    if (isPostingFriday(day, holidays)) count++;
+  }
+  return sign * count;
+}
+
+// 대상 날짜에 칭찬할 동료를 고른다. (순수 함수 → 단위 테스트 가능)
+// rotation: { anchorDate: "YYYY-MM-DD", anchorName: "이름" }
+// 기준 동료가 목록에 없으면(이름 변경·삭제) 목록 첫 사람을 기준으로 삼는다.
+function pickCoworkerForDate(kstDate, names, holidays, rotation) {
+  if (!Array.isArray(names) || names.length === 0) throw new Error('coworkers list is empty.');
+  const anchorIndex = Math.max(0, names.indexOf(rotation && rotation.anchorName));
+  const anchorDate = (rotation && rotation.anchorDate) || formatKstDate(kstDate);
+  const steps = countPostingFridays(anchorDate, kstDate, holidays);
+  const index = (((anchorIndex + steps) % names.length) + names.length) % names.length;
+  return { name: names[index], index, steps };
 }
 
 async function readResponseBody(response) {
@@ -475,13 +546,22 @@ async function handlePost(page) {
           .filter(name => name.length > 0);
           
         if (names.length > 0) {
-          // 월·수요일과 동일하게 연중 주차(week-of-year)로 순환 선택한다.
-          // 무작위(random)와 달리 목록을 한 바퀴 돌기 전까지 직전 주와 같은 사람이
-          // 다시 뽑히지 않으므로 "직전과 동일인 선택"이 구조적으로 방지된다.
-          const weekOfYear = getWeekOfYear(kstDate);
-          const rotationIndex = weekOfYear % names.length;
-          selectedName = names[rotationIndex];
-          console.log(`Selected co-worker for praise (week ${weekOfYear}): ${selectedName}`);
+          // 기준일(data/coworker-rotation.json)부터 '공휴일이 아닌 금요일'만 세어 순서대로 선택한다.
+          // 공휴일 금요일은 순번을 소모하지 않으므로 그 주 차례인 동료는 다음 금요일로 넘어가고,
+          // 연도가 바뀌어도 순번이 처음으로 되돌아가지 않는다. (목록 한 바퀴 동안 중복·누락 없음)
+          const rotation = loadCoworkerRotation();
+          if (!names.includes(rotation.anchorName)) {
+            console.warn(
+              `⚠️ coworker-rotation.json의 기준 동료 "${rotation.anchorName}"이(가) coworkers.txt에 없습니다. ` +
+              `목록 첫 사람(${names[0]})을 기준으로 순번을 계산합니다.`
+            );
+          }
+          const pick = pickCoworkerForDate(kstDate, names, loadHolidays(), rotation);
+          selectedName = pick.name;
+          console.log(
+            `Selected co-worker for praise: ${selectedName} ` +
+            `(기준 ${rotation.anchorDate} ${rotation.anchorName} → 포스팅 금요일 ${pick.steps}회 경과, ${pick.index + 1}/${names.length}번)`
+          );
         } else {
           throw new Error('coworkers.txt is empty.');
         }
@@ -1095,6 +1175,9 @@ module.exports = {
   getAttendanceSkipReason,
   getHolidaySkipReason,
   HOLIDAY_SKIP_ACTIVITIES,
+  // 동료 칭찬 순번 순수 유틸
+  countPostingFridays,
+  pickCoworkerForDate,
   // 물방울 뽑기(lottery) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
   parseLotteryProbability,
   parseLotteryStock,
