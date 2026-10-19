@@ -48,6 +48,7 @@ flowchart LR
     LOT --> LOTTERY
     HOL --> ATT
     HOL --> LOTTERY
+    HOL --> POST
     ATT --> SITE
     POST --> SITE
     LOTTERY --> SITE
@@ -58,7 +59,7 @@ flowchart LR
 |-----------|------|-----------|
 | **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
-| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석·뽑기 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
+| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석·뽑기·포스팅 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
 | **실패 알림** | 실행 실패 시 상세 로그를 담아 자동 생성되는 GitHub Issue | (워크플로우의 `failure()` 단계) |
 
@@ -68,7 +69,7 @@ flowchart LR
 
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
 - **매일 자동 출석체크 (평일 06:17~09:17 KST, 재시도 창)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다. (예약 실행 지연에 대비해 창 초반에 여러 번 예약) **법정 공휴일(대체공휴일·선거일 포함)에는 출석을 시도하지 않습니다.**
-- **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다.
+- **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다. **법정 공휴일에는 포스팅하지 않습니다.**
 - **물방울 뽑기 조건부 자동 응모 (평일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
 
 ---
@@ -153,9 +154,9 @@ sequenceDiagram
     end
 ```
 
-#### 🗓️ 법정 공휴일에는 출석·뽑기를 하지 않음 (`data/holidays.json`)
+#### 🗓️ 법정 공휴일에는 출석·뽑기·포스팅을 하지 않음 (`data/holidays.json`)
 
-평일이라도 **법정 공휴일**(예: 7/17 제헌절, 10/9 한글날, 설·추석 연휴, **대체공휴일**, 선거일)에는 휴일이므로 **출석과 물방울 뽑기를 모두** 시도하지 않습니다. 봇은 **브라우저를 띄우거나 로그인하기 전에** `data/holidays.json`을 확인해 바로 종료합니다. (정상 종료이므로 실패 이슈도 생성되지 않습니다.)
+평일이라도 **법정 공휴일**(예: 7/17 제헌절, 10/9 한글날, 설·추석 연휴, **대체공휴일**, 선거일)에는 휴일이므로 **출석, 물방울 뽑기, 자동 포스팅을 모두** 시도하지 않습니다. 봇은 **브라우저를 띄우거나 로그인하기 전에** `data/holidays.json`을 확인해 바로 종료합니다. (정상 종료이므로 실패 이슈도 생성되지 않습니다.)
 
 ```json
 {
@@ -183,6 +184,7 @@ sequenceDiagram
     participant GH as 🐙 GitHub Issues
 
     CRON->>BOT: node index.js post
+    Note over BOT: 사전 점검 (로그인 전)<br/>공휴일(data/holidays.json)이면 → 바로 종료
     BOT->>SITE: 로그인
     Note over BOT: KST 기준 요일 판별 (getDay)
     alt 월요일 — 긍정 문구

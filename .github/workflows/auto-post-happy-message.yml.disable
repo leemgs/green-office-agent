@@ -4,6 +4,7 @@ on:
   schedule:
     # 09:00 KST 수요일 = 00:00 UTC Wed
     # "긍정 문구" 카테고리로 "오늘의 행복 한마디" 포스팅 등록 (행복 명언 API → 실패 시 data/life-tips.json 폴백)
+    # 법정 공휴일(data/holidays.json)에는 로그인 전에 바로 종료하여 포스팅하지 않습니다.
     - cron: '0 0 * * 3'
   workflow_dispatch:
 

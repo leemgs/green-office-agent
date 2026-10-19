@@ -4,6 +4,7 @@ on:
   schedule:
     # 09:00 KST 월요일 = 00:00 UTC Mon
     # "긍정 문구" 카테고리로 오늘의 명언 + 의미 해설 포스팅 등록 (data/quotes.json에서 주차 순환 선택)
+    # 법정 공휴일(data/holidays.json)에는 로그인 전에 바로 종료하여 포스팅하지 않습니다.
     - cron: '0 0 * * 1'
   workflow_dispatch:
 
