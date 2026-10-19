@@ -4,6 +4,7 @@ on:
   schedule:
     # 09:00 KST 금요일 = 00:00 UTC Fri
     # "동료 칭찬" 카테고리로 "***님을 칭찬합니다." 포스팅 등록 (data/coworkers.txt에서 주차 순환 선택)
+    # 법정 공휴일(data/holidays.json)에는 로그인 전에 바로 종료하여 포스팅하지 않습니다.
     - cron: '0 0 * * 5'
   workflow_dispatch:
 

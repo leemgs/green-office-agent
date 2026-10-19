@@ -18,6 +18,7 @@ const {
   hasHolidayDataForYear,
   getAttendanceSkipReason,
   getHolidaySkipReason,
+  HOLIDAY_SKIP_ACTIVITIES,
 } = require('../bot');
 
 const holidays = require('../data/holidays.json');
@@ -74,6 +75,17 @@ test('getHolidaySkipReason skips the lottery only on holidays', () => {
   assert.match(getHolidaySkipReason(new Date(2026, 9, 5, 15, 0), holidays, '뽑기 응모를'), /개천절 대체 휴일/);
   // 평일 → 진행(null). 뽑기는 출석 시간대 제한이 없으므로 오후 3시여도 진행
   assert.equal(getHolidaySkipReason(new Date(2026, 9, 12, 15, 0), holidays, '뽑기 응모를'), null);
+});
+
+test('posting is skipped on holidays, including a Friday holiday for 동료 칭찬', () => {
+  assert.equal(HOLIDAY_SKIP_ACTIVITIES.post, '포스팅을');
+  // 10/9(금, 한글날) 09:00 — 금요일 동료 칭찬 포스팅 예정일이지만 공휴일 → 건너뜀
+  assert.equal(
+    getHolidaySkipReason(new Date(2026, 9, 9, 9, 0), holidays, HOLIDAY_SKIP_ACTIVITIES.post),
+    '오늘(2026-10-09)은 공휴일(한글날)이므로 포스팅을 시도하지 않습니다.'
+  );
+  // 10/16(금) 평일 → 진행
+  assert.equal(getHolidaySkipReason(new Date(2026, 9, 16, 9, 0), holidays, HOLIDAY_SKIP_ACTIVITIES.post), null);
 });
 
 test('weekly and daily limit alerts are recognized as idempotent reruns', () => {
