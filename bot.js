@@ -49,6 +49,55 @@ function formatKstHm(kstDate) {
   return `${hh}:${mm}`;
 }
 
+// KST Date를 "YYYY-MM-DD" 문자열로 포맷한다. (data/holidays.json의 키 형식)
+function formatKstDate(kstDate) {
+  const yyyy = kstDate.getFullYear();
+  const mm = String(kstDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(kstDate.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// data/holidays.json({ "YYYY-MM-DD": "공휴일 이름" })을 읽는다.
+// 파일이 없거나 깨져 있으면 빈 목록으로 처리하고 경고만 남긴다(출석 자체를 막지는 않음).
+function loadHolidays() {
+  const fs = require('fs');
+  const path = require('path');
+  const holidaysFile = path.join(__dirname, 'data', 'holidays.json');
+  try {
+    return JSON.parse(fs.readFileSync(holidaysFile, 'utf8'));
+  } catch (err) {
+    console.warn(`holidays.json을 읽지 못했습니다(${err.message}). 공휴일 건너뛰기 없이 진행합니다.`);
+    return {};
+  }
+}
+
+// 해당 날짜가 공휴일이면 이름을, 아니면 null을 반환한다. (순수 함수 → 단위 테스트 가능)
+function getHolidayName(kstDate, holidays) {
+  return (holidays && holidays[formatKstDate(kstDate)]) || null;
+}
+
+// 공휴일 목록에 해당 연도 데이터가 하나라도 있는지 확인한다. (연도별 갱신 누락 감지용)
+function hasHolidayDataForYear(year, holidays) {
+  return Object.keys(holidays || {}).some(date => date.startsWith(`${year}-`));
+}
+
+// 출석을 시도하지 말아야 하는 이유를 반환한다. 시도해도 되면 null. (순수 함수 → 단위 테스트 가능)
+//   1) 법정 공휴일(대체공휴일·선거일 포함)이면 휴일이므로 건너뜀
+//   2) 출석 가능 시간대(평일 06:00~11:00 KST) 밖이면 건너뜀 (주말·예약 실행 지연 대비)
+function getAttendanceSkipReason(kstDate, holidays) {
+  const holidayName = getHolidayName(kstDate, holidays);
+  if (holidayName) {
+    return `오늘(${formatKstDate(kstDate)})은 공휴일(${holidayName})이므로 출석을 시도하지 않습니다.`;
+  }
+  if (!isWithinAttendanceWindow(kstDate)) {
+    return (
+      `출석 가능 시간(평일 06:00~11:00 KST)이 아니므로 건너뜁니다. 현재 KST: ${formatKstHm(kstDate)}. ` +
+      `(예약 실행 지연으로 보이며, 창 안의 다른 예약 실행이 출석을 처리합니다.)`
+    );
+  }
+  return null;
+}
+
 async function readResponseBody(response) {
   const contentType = response.headers()['content-type'] || '';
 
@@ -178,6 +227,23 @@ function planLotteryDraws(cards, targets) {
 }
 
 async function runBot(mode = 'attendance') {
+  // ── 출석 사전 점검: 공휴일·출석 시간대 밖이면 브라우저를 띄우거나 로그인하지 않고 바로 종료 ──
+  if (mode === 'attendance') {
+    const kstNow = getKstNow();
+    const holidays = loadHolidays();
+    if (!hasHolidayDataForYear(kstNow.getFullYear(), holidays)) {
+      console.warn(
+        `⚠️ data/holidays.json에 ${kstNow.getFullYear()}년 공휴일 데이터가 없습니다. ` +
+        `공휴일 건너뛰기가 동작하지 않으니 해당 연도 공휴일을 추가해 주세요.`
+      );
+    }
+    const skipReason = getAttendanceSkipReason(kstNow, holidays);
+    if (skipReason) {
+      console.log(skipReason);
+      return;
+    }
+  }
+
   console.log(`Starting bot in ${mode} mode with stealth plugin...`);
   const browser = await chromium.launch({ 
     headless: true,
@@ -293,19 +359,9 @@ function handleAttendanceTimeRejection(context) {
 }
 
 async function handleAttendance(page) {
-  // ── Guard: 출석 가능 시간대인지 먼저 확인 ──
-  // GitHub Actions 예약 실행은 수십 분~수 시간 지연될 수 있어, 창(평일 06:00~11:00 KST)을
-  // 벗어난 시각에 실행되기도 한다. 창 밖이면 어차피 사이트가 거부하므로, 불필요한 시도·
-  // 하드 실패(이슈 생성) 대신 조용히 건너뛴다. (창 안에 예약된 다른 실행이 출석을 처리)
+  // 공휴일·출석 시간대(평일 06:00~11:00 KST) 점검은 runBot의 사전 점검에서 이미 끝났다.
+  // (GitHub Actions 예약 실행은 지연될 수 있어, 창 밖이면 로그인 전에 조용히 건너뛴다.)
   const kstNow = getKstNow();
-  if (!isWithinAttendanceWindow(kstNow)) {
-    console.log(
-      `출석 가능 시간(평일 06:00~11:00 KST)이 아니므로 건너뜁니다. 현재 KST: ${formatKstHm(kstNow)}. ` +
-      `(예약 실행 지연으로 보이며, 창 안의 다른 예약 실행이 출석을 처리합니다.)`
-    );
-    return;
-  }
-
   console.log(`Navigating to attendance page... (현재 KST ${formatKstHm(kstNow)})`);
   await page.goto(`${SITE_URL}attendance`);
   await page.waitForTimeout(3000);
@@ -1014,6 +1070,11 @@ module.exports = {
   // 출석 시간창 판별 순수 유틸 — 브라우저 없이 단위 테스트 가능.
   isWithinAttendanceWindow,
   ATTENDANCE_REJECTION_MESSAGE,
+  // 공휴일 건너뛰기 순수 유틸
+  formatKstDate,
+  getHolidayName,
+  hasHolidayDataForYear,
+  getAttendanceSkipReason,
   // 물방울 뽑기(lottery) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
   parseLotteryProbability,
   parseLotteryStock,

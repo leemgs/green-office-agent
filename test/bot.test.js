@@ -13,7 +13,13 @@ const {
   planLotteryDraws,
   DEFAULT_LOTTERY_THRESHOLD,
   isWithinAttendanceWindow,
+  formatKstDate,
+  getHolidayName,
+  hasHolidayDataForYear,
+  getAttendanceSkipReason,
 } = require('../bot');
+
+const holidays = require('../data/holidays.json');
 
 // ── 출석 시간창(평일 06:00~11:00 KST) 판별 테스트 ──
 // 2026-10-12=월, 10-13=화, 10-10=토, 10-11=일. Date는 KST 벽시계로 간주한다.
@@ -29,6 +35,36 @@ test('isWithinAttendanceWindow accepts weekday 06:00~10:59 and rejects the rest'
   // 주말은 시간과 무관하게 불가
   assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 10, 8, 0)), false);  // 토 08:00
   assert.equal(isWithinAttendanceWindow(new Date(2026, 9, 11, 8, 0)), false);  // 일 08:00
+});
+
+// ── 법정 공휴일 건너뛰기 테스트 (data/holidays.json 기준) ──
+test('holidays.json contains the requested legal holidays', () => {
+  assert.equal(getHolidayName(new Date(2026, 6, 17, 8, 0), holidays), '제헌절');   // 7/17 (금)
+  assert.equal(getHolidayName(new Date(2026, 9, 9, 8, 0), holidays), '한글날');    // 10/9 (금)
+  assert.equal(getHolidayName(new Date(2026, 9, 5, 8, 0), holidays), '개천절 대체 휴일'); // 10/5 (월)
+  assert.equal(getHolidayName(new Date(2026, 8, 24, 8, 0), holidays), '추석 전날');  // 9/24 (목)
+  assert.equal(getHolidayName(new Date(2026, 9, 12, 8, 0), holidays), null);        // 10/12 (월) 평일
+  assert.equal(hasHolidayDataForYear(2026, holidays), true);
+  assert.equal(hasHolidayDataForYear(2027, holidays), true);
+  assert.equal(hasHolidayDataForYear(2030, holidays), false);
+  // 모든 키는 YYYY-MM-DD 형식
+  for (const key of Object.keys(holidays)) assert.match(key, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('formatKstDate pads month and day', () => {
+  assert.equal(formatKstDate(new Date(2026, 0, 5, 9, 0)), '2026-01-05');
+});
+
+test('getAttendanceSkipReason skips holidays and out-of-window times only', () => {
+  // 공휴일(평일·출석 시간대 안이어도) → 건너뜀
+  assert.match(getAttendanceSkipReason(new Date(2026, 9, 9, 8, 0), holidays), /공휴일\(한글날\)/);
+  assert.match(getAttendanceSkipReason(new Date(2026, 6, 17, 7, 30), holidays), /공휴일\(제헌절\)/);
+  // 평일 출석 시간대 안 → 시도함(null)
+  assert.equal(getAttendanceSkipReason(new Date(2026, 9, 12, 8, 0), holidays), null);
+  // 평일이지만 창 밖(지연 실행) → 건너뜀
+  assert.match(getAttendanceSkipReason(new Date(2026, 9, 13, 11, 46), holidays), /출석 가능 시간/);
+  // 공휴일 목록이 비어 있어도 평일 창 안이면 시도함
+  assert.equal(getAttendanceSkipReason(new Date(2026, 9, 9, 8, 0), {}), null);
 });
 
 test('weekly and daily limit alerts are recognized as idempotent reruns', () => {

@@ -21,6 +21,7 @@ flowchart LR
         L["data/life-tips.json<br/>(생활정보 100개)"]
         C["data/coworkers.txt<br/>(동료 명단)"]
         LOT["data/lottery.json<br/>(응모 대상 물품)"]
+        HOL["data/holidays.json<br/>(법정 공휴일)"]
         API["행복 명언 API<br/>(api.sobabear.com)"]
     end
 
@@ -45,6 +46,7 @@ flowchart LR
     C --> POST
     API --> POST
     LOT --> LOTTERY
+    HOL --> ATT
     ATT --> SITE
     POST --> SITE
     LOTTERY --> SITE
@@ -55,7 +57,7 @@ flowchart LR
 |-----------|------|-----------|
 | **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
-| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 (명언·생활정보·동료 명단·응모 물품·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json) |
+| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
 | **실패 알림** | 실행 실패 시 상세 로그를 담아 자동 생성되는 GitHub Issue | (워크플로우의 `failure()` 단계) |
 
@@ -64,7 +66,7 @@ flowchart LR
 ## ✨ 주요 기능
 
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
-- **매일 자동 출석체크 (평일 06:17~09:17 KST, 재시도 창)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다. (예약 실행 지연에 대비해 창 초반에 여러 번 예약)
+- **매일 자동 출석체크 (평일 06:17~09:17 KST, 재시도 창)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다. (예약 실행 지연에 대비해 창 초반에 여러 번 예약) **법정 공휴일(대체공휴일·선거일 포함)에는 출석을 시도하지 않습니다.**
 - **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다.
 - **물방울 뽑기 조건부 자동 응모 (평일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
 
@@ -134,6 +136,7 @@ sequenceDiagram
     participant GH as 🐙 GitHub Issues
 
     CRON->>BOT: node index.js attendance
+    Note over BOT: 사전 점검 (로그인 전)<br/>공휴일(data/holidays.json) 또는 출석 시간 밖이면 → 바로 종료
     BOT->>SITE: 로그인 (USER_ID / USER_PASSWORD)
     SITE-->>BOT: 로그인 성공
     BOT->>SITE: /attendance 페이지 이동
@@ -147,6 +150,23 @@ sequenceDiagram
         BOT->>GH: 실패 로그로 이슈 자동 생성
     end
 ```
+
+#### 🗓️ 법정 공휴일에는 출석하지 않음 (`data/holidays.json`)
+
+평일이라도 **법정 공휴일**(예: 7/17 제헌절, 10/9 한글날, 설·추석 연휴, **대체공휴일**, 선거일)에는 휴일이므로 출석을 시도하지 않습니다. 봇은 **브라우저를 띄우거나 로그인하기 전에** `data/holidays.json`을 확인해 바로 종료합니다. (정상 종료이므로 실패 이슈도 생성되지 않습니다.)
+
+```json
+{
+  "2026-07-17": "제헌절",
+  "2026-10-05": "개천절 대체 휴일",
+  "2026-10-09": "한글날"
+}
+```
+
+> [!IMPORTANT]
+> - 현재 **2026·2027년** 공휴일이 등록되어 있습니다(Python [`holidays`](https://pypi.org/project/holidays/) 라이브러리 기준, 대체공휴일·선거일 포함).
+> - 정부가 **임시공휴일**을 새로 지정하거나 **회사 지정 휴무일**이 있으면 `"YYYY-MM-DD": "이름"` 한 줄을 추가하세요.
+> - 목록에 **해당 연도 데이터가 없으면** 실행 로그에 경고가 표시됩니다. 매년 말 다음 해 공휴일을 추가해 주세요.
 
 ### 2) 자동 포스팅 흐름 (월·수·금 09:00 KST)
 
