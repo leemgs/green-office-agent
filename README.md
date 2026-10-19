@@ -47,6 +47,7 @@ flowchart LR
     API --> POST
     LOT --> LOTTERY
     HOL --> ATT
+    HOL --> LOTTERY
     ATT --> SITE
     POST --> SITE
     LOTTERY --> SITE
@@ -57,7 +58,7 @@ flowchart LR
 |-----------|------|-----------|
 | **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
-| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
+| **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석·뽑기 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
 | **실패 알림** | 실행 실패 시 상세 로그를 담아 자동 생성되는 GitHub Issue | (워크플로우의 `failure()` 단계) |
 
@@ -101,6 +102,7 @@ flowchart LR
 > [!NOTE]
 > - 당첨확률은 카드의 대표 확률만 읽습니다. 예) `당첨확률: 4.66% (+2.93%p 보너스)` → **4.66%** 로 판정 (괄호 안 보너스 `%p`는 무시).
 > - `오늘 남은 횟수`가 0이거나, 응모 중 **물방울 부족** 안내가 감지되면 즉시 중단합니다.
+> - **법정 공휴일**(`data/holidays.json`)에는 로그인 전에 바로 종료하므로 응모하지 않고 물방울도 차감되지 않습니다.
 > - 예시 화면 기준 `이지블루`의 당첨확률은 4.66%로 10% 미만이므로 응모되지 않으며, 확률이 10% 이상으로 오른 날에만 자동 응모됩니다.
 
 ---
@@ -151,9 +153,9 @@ sequenceDiagram
     end
 ```
 
-#### 🗓️ 법정 공휴일에는 출석하지 않음 (`data/holidays.json`)
+#### 🗓️ 법정 공휴일에는 출석·뽑기를 하지 않음 (`data/holidays.json`)
 
-평일이라도 **법정 공휴일**(예: 7/17 제헌절, 10/9 한글날, 설·추석 연휴, **대체공휴일**, 선거일)에는 휴일이므로 출석을 시도하지 않습니다. 봇은 **브라우저를 띄우거나 로그인하기 전에** `data/holidays.json`을 확인해 바로 종료합니다. (정상 종료이므로 실패 이슈도 생성되지 않습니다.)
+평일이라도 **법정 공휴일**(예: 7/17 제헌절, 10/9 한글날, 설·추석 연휴, **대체공휴일**, 선거일)에는 휴일이므로 **출석과 물방울 뽑기를 모두** 시도하지 않습니다. 봇은 **브라우저를 띄우거나 로그인하기 전에** `data/holidays.json`을 확인해 바로 종료합니다. (정상 종료이므로 실패 이슈도 생성되지 않습니다.)
 
 ```json
 {
