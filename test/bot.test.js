@@ -17,6 +17,7 @@ const {
   getHolidayName,
   hasHolidayDataForYear,
   getAttendanceSkipReason,
+  getHolidaySkipReason,
 } = require('../bot');
 
 const holidays = require('../data/holidays.json');
@@ -65,6 +66,14 @@ test('getAttendanceSkipReason skips holidays and out-of-window times only', () =
   assert.match(getAttendanceSkipReason(new Date(2026, 9, 13, 11, 46), holidays), /출석 가능 시간/);
   // 공휴일 목록이 비어 있어도 평일 창 안이면 시도함
   assert.equal(getAttendanceSkipReason(new Date(2026, 9, 9, 8, 0), {}), null);
+});
+
+test('getHolidaySkipReason skips the lottery only on holidays', () => {
+  // 공휴일(평일 오후 3시) → 뽑기 건너뜀
+  assert.match(getHolidaySkipReason(new Date(2026, 9, 9, 15, 0), holidays, '뽑기 응모를'), /공휴일\(한글날\)이므로 뽑기 응모를/);
+  assert.match(getHolidaySkipReason(new Date(2026, 9, 5, 15, 0), holidays, '뽑기 응모를'), /개천절 대체 휴일/);
+  // 평일 → 진행(null). 뽑기는 출석 시간대 제한이 없으므로 오후 3시여도 진행
+  assert.equal(getHolidaySkipReason(new Date(2026, 9, 12, 15, 0), holidays, '뽑기 응모를'), null);
 });
 
 test('weekly and daily limit alerts are recognized as idempotent reruns', () => {

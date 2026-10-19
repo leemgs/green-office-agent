@@ -81,14 +81,20 @@ function hasHolidayDataForYear(year, holidays) {
   return Object.keys(holidays || {}).some(date => date.startsWith(`${year}-`));
 }
 
+// 법정 공휴일(대체공휴일·선거일 포함)이면 건너뛸 이유를, 아니면 null을 반환한다. (순수 함수)
+// activity: 로그에 표시할 작업(조사 포함) (예: '출석을', '뽑기 응모를')
+function getHolidaySkipReason(kstDate, holidays, activity) {
+  const holidayName = getHolidayName(kstDate, holidays);
+  if (!holidayName) return null;
+  return `오늘(${formatKstDate(kstDate)})은 공휴일(${holidayName})이므로 ${activity} 시도하지 않습니다.`;
+}
+
 // 출석을 시도하지 말아야 하는 이유를 반환한다. 시도해도 되면 null. (순수 함수 → 단위 테스트 가능)
 //   1) 법정 공휴일(대체공휴일·선거일 포함)이면 휴일이므로 건너뜀
 //   2) 출석 가능 시간대(평일 06:00~11:00 KST) 밖이면 건너뜀 (주말·예약 실행 지연 대비)
 function getAttendanceSkipReason(kstDate, holidays) {
-  const holidayName = getHolidayName(kstDate, holidays);
-  if (holidayName) {
-    return `오늘(${formatKstDate(kstDate)})은 공휴일(${holidayName})이므로 출석을 시도하지 않습니다.`;
-  }
+  const holidayReason = getHolidaySkipReason(kstDate, holidays, '출석을');
+  if (holidayReason) return holidayReason;
   if (!isWithinAttendanceWindow(kstDate)) {
     return (
       `출석 가능 시간(평일 06:00~11:00 KST)이 아니므로 건너뜁니다. 현재 KST: ${formatKstHm(kstDate)}. ` +
@@ -227,8 +233,10 @@ function planLotteryDraws(cards, targets) {
 }
 
 async function runBot(mode = 'attendance') {
-  // ── 출석 사전 점검: 공휴일·출석 시간대 밖이면 브라우저를 띄우거나 로그인하지 않고 바로 종료 ──
-  if (mode === 'attendance') {
+  // ── 사전 점검: 브라우저를 띄우거나 로그인하기 전에 건너뛸지 판단한다 ──
+  //   - 출석: 공휴일 또는 출석 시간대(평일 06:00~11:00 KST) 밖이면 종료
+  //   - 뽑기: 공휴일이면 종료 (물방울 소모 없이)
+  if (mode === 'attendance' || mode === 'lottery') {
     const kstNow = getKstNow();
     const holidays = loadHolidays();
     if (!hasHolidayDataForYear(kstNow.getFullYear(), holidays)) {
@@ -237,7 +245,9 @@ async function runBot(mode = 'attendance') {
         `공휴일 건너뛰기가 동작하지 않으니 해당 연도 공휴일을 추가해 주세요.`
       );
     }
-    const skipReason = getAttendanceSkipReason(kstNow, holidays);
+    const skipReason = mode === 'attendance'
+      ? getAttendanceSkipReason(kstNow, holidays)
+      : getHolidaySkipReason(kstNow, holidays, '뽑기 응모를');
     if (skipReason) {
       console.log(skipReason);
       return;
@@ -1075,6 +1085,7 @@ module.exports = {
   getHolidayName,
   hasHolidayDataForYear,
   getAttendanceSkipReason,
+  getHolidaySkipReason,
   // 물방울 뽑기(lottery) 순수 유틸 — 브라우저 없이 단위 테스트 가능.
   parseLotteryProbability,
   parseLotteryStock,
