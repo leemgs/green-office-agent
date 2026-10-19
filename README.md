@@ -1,6 +1,6 @@
 # 🌿 그린메이커 자동화 봇 (Green Maker Auto Bot)
 
-이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 6~9시대에 자동 출석체크**를, **월·수·금 오전 9시에는 요일별 자동 포스팅**을, **평일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다.
+이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 6~9시대에 자동 출석체크**를, **평일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다. (월·수·금 요일별 자동 포스팅은 현재 **비활성화** 상태입니다.)
 
 ---
 
@@ -12,7 +12,7 @@
 flowchart LR
     subgraph TRIGGER["⏰ 트리거 (GitHub Actions cron)"]
         A1["출석 워크플로우<br/>평일 06~09시대 KST"]
-        A2["포스팅 워크플로우<br/>월·수·금 09:00 KST"]
+        A2["포스팅 워크플로우<br/>월·수·금 09:00 KST<br/>(현재 비활성)"]
         A3["뽑기 워크플로우<br/>평일 15:00 KST"]
     end
 
@@ -57,7 +57,7 @@ flowchart LR
 
 | 구성 요소 | 역할 | 관련 파일 |
 |-----------|------|-----------|
-| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) |
+| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | 활성: [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) / 비활성: `auto-post-*.yml.disable` |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
 | **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석·뽑기·포스팅 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
@@ -69,7 +69,7 @@ flowchart LR
 
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
 - **매일 자동 출석체크 (평일 06:17~09:17 KST, 재시도 창)**: `오늘도 화이팅` 문구와 함께 자동으로 출석체크를 완료합니다. (예약 실행 지연에 대비해 창 초반에 여러 번 예약) **법정 공휴일(대체공휴일·선거일 포함)에는 출석을 시도하지 않습니다.**
-- **주간 자동 포스팅 (월·수·금 오전 9시)**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다. **법정 공휴일에는 포스팅하지 않습니다.**
+- **주간 자동 포스팅 (월·수·금 오전 9시) — ⛔ 현재 비활성화**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다. **법정 공휴일에는 포스팅하지 않습니다.**
 - **물방울 뽑기 조건부 자동 응모 (평일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
 
 ---
@@ -110,7 +110,10 @@ flowchart LR
 
 ## 📅 주간 자동 포스팅 방식
 
-매주 **월·수·금 오전 9시(KST)** 에 포스팅이 실행되며, 요일마다 글의 출처와 "새로운 글을 가져오는 방식"이 다릅니다. (관련 로직: [`bot.js`](bot.js), 스케줄: [`.github/workflows/auto-post.yml`](.github/workflows/auto-post.yml))
+매주 **월·수·금 오전 9시(KST)** 에 포스팅이 실행되며, 요일마다 글의 출처와 "새로운 글을 가져오는 방식"이 다릅니다. (관련 로직: [`bot.js`](bot.js), 스케줄: `.github/workflows/auto-post-proverb.yml.disable`(월), `auto-post-happy-message.yml.disable`(수), `auto-post-coworker-praise.yml.disable`(금))
+
+> [!NOTE]
+> 현재 세 포스팅 워크플로우는 모두 **비활성화**(`.yml.disable`) 상태라 실행되지 않습니다. GitHub Actions는 `.yml`/`.yaml` 파일만 실행하므로, 다시 켜려면 원하는 파일 이름 끝의 `.disable`만 지우면 됩니다. (예: `auto-post-coworker-praise.yml.disable` → `auto-post-coworker-praise.yml`)
 
 | 요일 | 카테고리 | 내용 | 출처 | 새 글을 가져오는 방식 | 중복 방지 |
 |------|----------|------|------|----------------------|-----------|
@@ -282,13 +285,15 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 > 반드시 **Secrets** 탭에 등록해야 합니다. **Variables** 탭에 등록할 경우 보안상 위험하며, 일부 워크플로우에서 인식되지 않을 수 있습니다.
 
 ### Step 2: 스케줄 확인
-이미 다음 워크플로우 파일에 스케줄이 설정되어 있습니다. (모두 `workflow_dispatch`로 수동 실행도 가능합니다.)
+이미 다음 워크플로우 파일에 스케줄이 설정되어 있습니다. (활성 워크플로우는 `workflow_dispatch`로 수동 실행도 가능합니다.) **현재 자동 실행되는 것은 출석과 뽑기 두 가지뿐입니다.**
 
 | 워크플로우 | 실행 시각 (KST) | cron (UTC) | 동작 |
 |-----------|-----------------|------------|------|
 | [`auto-attendance.yml`](.github/workflows/auto-attendance.yml) | 평일 06:17/07:17/08:17/09:17 | `17 21~23 * * 0-4`, `17 0 * * 1-5` | 자동 출석체크 (예약 지연 대비 다중 창) |
-| [`auto-post.yml`](.github/workflows/auto-post.yml) | 월·수·금 오전 9시 | `0 0 * * 1,3,5` | 요일별 자동 포스팅 |
 | [`auto-lottery.yml`](.github/workflows/auto-lottery.yml) | 평일 오후 3시 | `0 6 * * 1-5` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
+| `auto-post-proverb.yml.disable` ⛔ | (월 오전 9시) | `0 0 * * 1` | 명언 포스팅 — **비활성** |
+| `auto-post-happy-message.yml.disable` ⛔ | (수 오전 9시) | `0 0 * * 3` | 행복 한마디 포스팅 — **비활성** |
+| `auto-post-coworker-praise.yml.disable` ⛔ | (금 오전 9시) | `0 0 * * 5` | 동료 칭찬 포스팅 — **비활성** |
 
 ---
 
