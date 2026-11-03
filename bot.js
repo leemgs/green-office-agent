@@ -109,19 +109,54 @@ const HOLIDAY_SKIP_ACTIVITIES = {
   post: '포스팅을',
 };
 
-// 출석을 시도하지 말아야 하는 이유를 반환한다. 시도해도 되면 null. (순수 함수 → 단위 테스트 가능)
-//   1) 법정 공휴일(대체공휴일·선거일 포함)이면 휴일이므로 건너뜀
-//   2) 출석 가능 시간대(평일 06:00~11:00 KST) 밖이면 건너뜀 (주말·예약 실행 지연 대비)
-function getAttendanceSkipReason(kstDate, holidays) {
+// 출석 실행 계획을 세운다. (순수 함수 → 단위 테스트 가능)
+// GitHub Actions 예약 실행은 수 시간씩 지연될 수 있어(2026-11 기준 3~9시간 관측), 출석 창
+// (평일 06:00~11:00 KST)보다 훨씬 이른 시각부터 여러 번 예약하고, 창이 열리기 전에 시작된
+// 실행은 06:00까지 기다렸다가 출석한다.
+//   - skip:   공휴일·주말 → 출석하지 않음
+//   - wait:   평일 06:00 이전 → waitMs 만큼 기다린 뒤 다시 판단
+//   - run:    평일 06:00~10:59 → 바로 출석
+//   - missed: 평일 11:00 이후 → 오늘 출석을 놓침 (워크플로우가 '오늘 출석 완료' 기록이 없을 때만
+//             봇을 실행하므로, 이 경우는 실제 누락이다 → 알림 대상)
+const ATTENDANCE_WAIT_UNTIL = { hour: 6, minute: 0, second: 30 }; // 창 열림 직후(경계 거부 방지 30초 여유)
+const ATTENDANCE_MAX_WAIT_MS = 5.5 * 60 * 60 * 1000; // GitHub 작업 최대 6시간 안에서 대기 상한
+
+function planAttendance(kstDate, holidays) {
   const holidayReason = getHolidaySkipReason(kstDate, holidays, HOLIDAY_SKIP_ACTIVITIES.attendance);
-  if (holidayReason) return holidayReason;
-  if (!isWithinAttendanceWindow(kstDate)) {
-    return (
-      `출석 가능 시간(평일 06:00~11:00 KST)이 아니므로 건너뜁니다. 현재 KST: ${formatKstHm(kstDate)}. ` +
-      `(예약 실행 지연으로 보이며, 창 안의 다른 예약 실행이 출석을 처리합니다.)`
-    );
+  if (holidayReason) return { action: 'skip', message: holidayReason };
+
+  const day = kstDate.getDay();
+  if (day === 0 || day === 6) {
+    return { action: 'skip', message: `오늘(${formatKstDate(kstDate)})은 주말이므로 출석을 시도하지 않습니다.` };
   }
-  return null;
+
+  const hour = kstDate.getHours();
+  if (hour < 6) {
+    const openAt = new Date(kstDate.getTime());
+    openAt.setHours(ATTENDANCE_WAIT_UNTIL.hour, ATTENDANCE_WAIT_UNTIL.minute, ATTENDANCE_WAIT_UNTIL.second, 0);
+    const waitMs = openAt.getTime() - kstDate.getTime();
+    if (waitMs > ATTENDANCE_MAX_WAIT_MS) {
+      return {
+        action: 'skip',
+        message: `현재 KST ${formatKstHm(kstDate)}: 출석 창(06:00)까지 너무 많이 남아 이번 실행은 건너뜁니다. (이후 예약 실행이 처리)`,
+      };
+    }
+    return {
+      action: 'wait',
+      waitMs,
+      message: `현재 KST ${formatKstHm(kstDate)}: 출석 창이 열리는 06:00까지 약 ${Math.ceil(waitMs / 60000)}분 기다린 뒤 출석합니다.`,
+    };
+  }
+
+  if (hour < 11) return { action: 'run', message: `현재 KST ${formatKstHm(kstDate)}: 출석 가능 시간입니다.` };
+
+  return {
+    action: 'missed',
+    message:
+      `ATTENDANCE_MISSED: 오늘(${formatKstDate(kstDate)}) 출석을 놓쳤습니다. 현재 KST ${formatKstHm(kstDate)}로 ` +
+      `출석 가능 시간(평일 06:00~11:00)이 지났고, 오늘 출석 완료 기록이 없습니다. ` +
+      `(GitHub Actions 예약 실행이 창 안에 시작되지 못함)`,
+  };
 }
 
 // ── 동료 칭찬 순번 ──
@@ -312,7 +347,7 @@ function planLotteryDraws(cards, targets) {
 
 async function runBot(mode = 'attendance') {
   // ── 사전 점검: 브라우저를 띄우거나 로그인하기 전에 건너뛸지 판단한다 ──
-  //   - 출석: 공휴일 또는 출석 시간대(평일 06:00~11:00 KST) 밖이면 종료
+  //   - 출석: 공휴일·주말이면 종료, 06:00 전이면 창이 열릴 때까지 대기, 11:00 이후면 누락으로 실패(알림)
   //   - 뽑기: 공휴일이면 종료 (물방울 소모 없이)
   //   - 포스팅: 공휴일이면 종료 (명언·행복 한마디·동료 칭찬 모두)
   if (mode in HOLIDAY_SKIP_ACTIVITIES) {
@@ -324,12 +359,29 @@ async function runBot(mode = 'attendance') {
         `공휴일 건너뛰기가 동작하지 않으니 해당 연도 공휴일을 추가해 주세요.`
       );
     }
-    const skipReason = mode === 'attendance'
-      ? getAttendanceSkipReason(kstNow, holidays)
-      : getHolidaySkipReason(kstNow, holidays, HOLIDAY_SKIP_ACTIVITIES[mode]);
-    if (skipReason) {
-      console.log(skipReason);
-      return;
+    if (mode === 'attendance') {
+      let plan = planAttendance(kstNow, holidays);
+      // 창이 열리기 전에 시작된 실행은 06:00까지 기다린다. (브라우저·로그인은 기다린 뒤에)
+      while (plan.action === 'wait') {
+        console.log(plan.message);
+        await new Promise(resolve => setTimeout(resolve, plan.waitMs));
+        plan = planAttendance(getKstNow(), holidays);
+      }
+      if (plan.action === 'skip') {
+        console.log(plan.message);
+        return;
+      }
+      if (plan.action === 'missed') {
+        console.error(plan.message);
+        throw new Error(plan.message);
+      }
+      console.log(plan.message);
+    } else {
+      const skipReason = getHolidaySkipReason(kstNow, holidays, HOLIDAY_SKIP_ACTIVITIES[mode]);
+      if (skipReason) {
+        console.log(skipReason);
+        return;
+      }
     }
   }
 
@@ -427,18 +479,17 @@ async function runBot(mode = 'attendance') {
 
 const ATTENDANCE_REJECTION_MESSAGE = '출석 가능 시간은 평일 오전 6시~11시입니다';
 
-// 사이트의 시간대 거부(출석 창 밖)를 감지했을 때의 처리.
-// - 지금이 창 밖(지연 실행 등)이면: 하드 실패가 아니라 건너뛸 상황이므로 true 반환 → 호출부에서 조용히 return.
-//   (GitHub Actions 예약 실행 지연으로 창을 넘긴 '뒤늦은' 실행이 여기에 해당. 같은 날 창 안의 다른 예약 실행이 출석을 처리한다.)
-// - 지금이 창 안인데도 거부되면: 사이트의 출석 가능 시간이 바뀐 것일 수 있으므로 throw → 이슈로 알린다.
+// 사이트의 시간대 거부(출석 창 밖)를 감지했을 때의 처리. 어느 경우든 출석이 안 됐으므로 throw → 이슈로 알린다.
+// - 지금이 창 밖이면: 출석 도중 11:00을 넘긴 경우 → 오늘 출석 누락(ATTENDANCE_MISSED)
+// - 지금이 창 안인데도 거부되면: 사이트의 출석 가능 시간이 바뀐 것일 수 있음(ATTENDANCE_TIME_REJECTED)
 function handleAttendanceTimeRejection(context) {
   const kstNow = getKstNow();
   if (!isWithinAttendanceWindow(kstNow)) {
-    console.log(
-      `출석 창(평일 06:00~11:00 KST)을 벗어난 시각(현재 KST ${formatKstHm(kstNow)})에 사이트가 거부했습니다. ` +
-      `예약 실행 지연으로 보고 건너뜁니다. (${context})`
-    );
-    return true; // graceful skip
+    const missedMsg =
+      `ATTENDANCE_MISSED: 오늘(${formatKstDate(kstNow)}) 출석을 놓쳤습니다. 현재 KST ${formatKstHm(kstNow)}에 ` +
+      `사이트가 출석 가능 시간이 아니라며 거부했습니다. (${context})`;
+    console.error(missedMsg);
+    throw new Error(missedMsg);
   }
   const errorMsg =
     `ATTENDANCE_TIME_REJECTED: 창 안(현재 KST ${formatKstHm(kstNow)})인데도 사이트가 거부했습니다. ` +
@@ -447,9 +498,20 @@ function handleAttendanceTimeRejection(context) {
   throw new Error(errorMsg);
 }
 
+// 오늘 출석이 끝났음을 표시 파일에 기록한다. (ATTENDANCE_MARKER_FILE이 설정된 경우)
+// 워크플로우는 이 파일을 'attendance-done-<KST 날짜>' 캐시로 저장해, 같은 날 뒤이어 시작되는
+// 예약 실행이 다시 출석하지 않도록 하고, 11:00 이후 '출석 누락' 판단에도 사용한다.
+function markAttendanceDone(detail) {
+  const markerFile = process.env.ATTENDANCE_MARKER_FILE;
+  if (!markerFile) return;
+  const fs = require('fs');
+  const kstNow = getKstNow();
+  fs.writeFileSync(markerFile, `${formatKstDate(kstNow)} ${formatKstHm(kstNow)} KST ${detail}\n`);
+  console.log(`출석 완료 기록을 남겼습니다: ${markerFile}`);
+}
+
 async function handleAttendance(page) {
-  // 공휴일·출석 시간대(평일 06:00~11:00 KST) 점검은 runBot의 사전 점검에서 이미 끝났다.
-  // (GitHub Actions 예약 실행은 지연될 수 있어, 창 밖이면 로그인 전에 조용히 건너뛴다.)
+  // 공휴일·주말·출석 시간대(평일 06:00~11:00 KST) 판단과 06:00까지의 대기는 runBot 사전 점검에서 끝났다.
   const kstNow = getKstNow();
   console.log(`Navigating to attendance page... (현재 KST ${formatKstHm(kstNow)})`);
   await page.goto(`${SITE_URL}attendance`);
@@ -460,7 +522,7 @@ async function handleAttendance(page) {
   const bodyText = await page.locator('body').innerText();
   const rejectionMessage = ATTENDANCE_REJECTION_MESSAGE;
   if (bodyText.includes(rejectionMessage)) {
-    if (handleAttendanceTimeRejection('페이지 로드 직후')) return;
+    handleAttendanceTimeRejection('페이지 로드 직후');
   }
 
   // ── Check if already checked in ──
@@ -468,6 +530,7 @@ async function handleAttendance(page) {
   for (const phrase of alreadyCheckedPhrases) {
     if (bodyText.includes(phrase)) {
       console.log(`Already checked in today (detected: "${phrase}"). Skipping.`);
+      markAttendanceDone(`already checked in ("${phrase}")`);
       return;
     }
   }
@@ -506,10 +569,11 @@ async function handleAttendance(page) {
   // 창 안인데 거부되면 사이트 시간 변경 의심으로 알린다.
   const afterText = await page.locator('body').innerText();
   if (afterText.includes(rejectionMessage)) {
-    if (handleAttendanceTimeRejection('출석 제출 후')) return;
+    handleAttendanceTimeRejection('출석 제출 후');
   }
 
   console.log('Attendance completed successfully.');
+  markAttendanceDone('checked in');
 }
 
 async function handlePost(page) {
@@ -1172,7 +1236,7 @@ module.exports = {
   formatKstDate,
   getHolidayName,
   hasHolidayDataForYear,
-  getAttendanceSkipReason,
+  planAttendance,
   getHolidaySkipReason,
   HOLIDAY_SKIP_ACTIVITIES,
   // 동료 칭찬 순번 순수 유틸
