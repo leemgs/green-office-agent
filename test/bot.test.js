@@ -16,7 +16,7 @@ const {
   formatKstDate,
   getHolidayName,
   hasHolidayDataForYear,
-  getAttendanceSkipReason,
+  planAttendance,
   getHolidaySkipReason,
   HOLIDAY_SKIP_ACTIVITIES,
   countPostingFridays,
@@ -59,16 +59,26 @@ test('formatKstDate pads month and day', () => {
   assert.equal(formatKstDate(new Date(2026, 0, 5, 9, 0)), '2026-01-05');
 });
 
-test('getAttendanceSkipReason skips holidays and out-of-window times only', () => {
+test('planAttendance: skip on holidays/weekends, wait before 06:00, run in window, missed after 11:00', () => {
   // 공휴일(평일·출석 시간대 안이어도) → 건너뜀
-  assert.match(getAttendanceSkipReason(new Date(2026, 9, 9, 8, 0), holidays), /공휴일\(한글날\)/);
-  assert.match(getAttendanceSkipReason(new Date(2026, 6, 17, 7, 30), holidays), /공휴일\(제헌절\)/);
-  // 평일 출석 시간대 안 → 시도함(null)
-  assert.equal(getAttendanceSkipReason(new Date(2026, 9, 12, 8, 0), holidays), null);
-  // 평일이지만 창 밖(지연 실행) → 건너뜀
-  assert.match(getAttendanceSkipReason(new Date(2026, 9, 13, 11, 46), holidays), /출석 가능 시간/);
-  // 공휴일 목록이 비어 있어도 평일 창 안이면 시도함
-  assert.equal(getAttendanceSkipReason(new Date(2026, 9, 9, 8, 0), {}), null);
+  assert.equal(planAttendance(new Date(2026, 9, 9, 8, 0), holidays).action, 'skip');
+  assert.match(planAttendance(new Date(2026, 6, 17, 7, 30), holidays).message, /공휴일\(제헌절\)/);
+  // 주말 → 건너뜀 (11/7 토)
+  assert.equal(planAttendance(new Date(2026, 10, 7, 8, 0), holidays).action, 'skip');
+  // 평일 06:00 전 → 06:00:30까지 대기 (11/3 화 01:07 → 4시간 53분 30초)
+  const early = planAttendance(new Date(2026, 10, 3, 1, 7), holidays);
+  assert.equal(early.action, 'wait');
+  assert.equal(early.waitMs, (4 * 60 + 53) * 60000 + 30000);
+  assert.equal(planAttendance(new Date(2026, 10, 3, 5, 59, 50), holidays).waitMs, 40000);
+  // 대기가 너무 길면(5.5시간 초과) 이번 실행은 건너뜀
+  assert.equal(planAttendance(new Date(2026, 10, 3, 0, 10), holidays).action, 'skip');
+  // 평일 06:00~10:59 → 실행
+  assert.equal(planAttendance(new Date(2026, 10, 3, 6, 0), holidays).action, 'run');
+  assert.equal(planAttendance(new Date(2026, 10, 3, 10, 59), holidays).action, 'run');
+  // 평일 11:00 이후 → 누락 (오늘 11/3 같은 경우 → 알림)
+  const missed = planAttendance(new Date(2026, 10, 3, 11, 4), holidays);
+  assert.equal(missed.action, 'missed');
+  assert.match(missed.message, /^ATTENDANCE_MISSED: 오늘\(2026-11-03\)/);
 });
 
 test('getHolidaySkipReason skips the lottery only on holidays', () => {

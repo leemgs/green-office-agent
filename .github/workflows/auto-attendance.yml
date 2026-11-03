@@ -4,16 +4,23 @@ on:
   schedule:
     # 출석 가능 시간: 평일 06:00~11:00 KST (= 전날 21:00 ~ 당일 02:00 UTC)
     #
-    # GitHub Actions의 예약 실행(schedule)은 수십 분~수 시간 지연될 수 있고, 특히 정각(:00)은
-    # 혼잡이 가장 심해 지연이 커진다. 과거 단일 예약(07:00 KST / '0 22')이 지연으로 11:00을
-    # 넘겨 사이트에 거부당했다(출석 창을 벗어남). 그래서:
-    #   (1) 정각을 피해 오프피크 분(:17)에 예약하고,
-    #   (2) 창 초반에 여러 번 예약해 일부가 지연돼도 적어도 하나는 창 안에 들도록 중복 예약한다.
-    # 봇은 이미 출석했으면 '출석 완료'를 감지해 건너뛰므로(멱등) 중복 실행은 안전하다.
-    # 또한 창을 벗어난 지연 실행은 하드 실패 대신 조용히 건너뛴다(bot.js handleAttendance).
+    # GitHub Actions의 예약 실행(schedule)은 정시 실행을 보장하지 않는다. 2026-10~11월에는
+    # 06:17 예약이 09:30~10:00에야 시작되는 등 3~9시간 지연이 관측됐고, 2026-11-03에는 예약 4개가
+    # 모두 11:00 이후로 밀려 출석을 놓쳤다. 그래서:
+    #   (1) 출석 창보다 훨씬 이른 01:07부터 예약해 두고,
+    #   (2) 06:00 전에 시작된 실행은 봇이 06:00까지 기다렸다가 출석한다(bot.js planAttendance).
+    #       → 지연이 0시간이든 9시간이든, 창 안에 시작되는 실행이 하나라도 있으면 출석한다.
+    #   (3) 출석에 성공하면 'attendance-done-<KST 날짜>' 캐시를 남겨, 같은 날 뒤이어 시작되는
+    #       실행은 브라우저를 띄우지 않고 바로 끝낸다(중복 출석 방지).
+    #   (4) 11:00이 지났는데 오늘 출석 기록이 없으면 '출석 누락' 이슈를 하루 1건 만든다.
+    # 공휴일·주말에는 봇이 로그인 전에 바로 종료한다(data/holidays.json).
+    # 정각(:00)은 혼잡이 심해 지연이 커지므로 :07/:17 분에 예약한다.
     #
-    # UTC 기준 요일 주의: 전날 21~23시 UTC는 KST 평일에 해당하는 UTC 요일이 일~목(0-4),
+    # UTC 기준 요일 주의: 전날 15~23시 UTC는 KST 평일에 해당하는 UTC 요일이 일~목(0-4),
     #                    당일 00~01시 UTC는 월~금(1-5)이다.
+    - cron: '7 16 * * 0-4'    # 01:07 KST (06:00까지 대기)
+    - cron: '7 18 * * 0-4'    # 03:07 KST (06:00까지 대기)
+    - cron: '7 20 * * 0-4'    # 05:07 KST (06:00까지 대기)
     - cron: '17 21 * * 0-4'   # 06:17 KST
     - cron: '17 22 * * 0-4'   # 07:17 KST
     - cron: '17 23 * * 0-4'   # 08:17 KST
@@ -24,25 +31,52 @@ permissions:
   contents: read
   issues: write
 
+# 여러 예약 실행이 동시에 출석하지 않도록 한 번에 하나씩만 실행한다.
+# (06:00을 기다리는 실행이 있으면 뒤이은 실행은 대기했다가, 출석 완료 기록을 보고 바로 끝난다.)
+concurrency:
+  group: auto-attendance
+  cancel-in-progress: false
+
 jobs:
   attendance:
     runs-on: ubuntu-latest
+    # 01:07에 정시 시작해 06:00까지 기다리는 경우(약 5시간)를 포함한 상한
+    timeout-minutes: 350
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Compute KST date
+        run: echo "KST_DATE=$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_ENV"
+
+      - name: Check whether today's attendance is already done
+        id: done
+        uses: actions/cache/restore@v4
+        with:
+          path: attendance-done.txt
+          key: attendance-done-${{ env.KST_DATE }}
+          lookup-only: true
+
+      - name: Already checked in today — skip
+        if: steps.done.outputs.cache-hit == 'true'
+        run: echo "오늘(${KST_DATE}) 출석은 이미 완료되었습니다(앞선 예약 실행이 처리). 건너뜁니다."
+
       - name: Setup Node.js
+        if: steps.done.outputs.cache-hit != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install dependencies
+        if: steps.done.outputs.cache-hit != 'true'
         run: npm install
 
       - name: Install Playwright Browsers
+        if: steps.done.outputs.cache-hit != 'true'
         run: npx playwright install chromium
 
-      - name: Run Attendance (06:17~09:17 KST Mon-Fri, retry windows)
+      - name: Run Attendance (waits until 06:00 KST if started early)
+        if: steps.done.outputs.cache-hit != 'true'
         run: |
           set -o pipefail
           node index.js attendance 2>&1 | tee attendance.log
@@ -50,14 +84,32 @@ jobs:
           USER_ID: ${{ secrets.USER_ID || vars.USER_ID }}
           USER_PASSWORD: ${{ secrets.USER_PASSWORD || vars.USER_PASSWORD }}
           SITE_URL: https://green-office.uk/
+          ATTENDANCE_MARKER_FILE: attendance-done.txt
+
+      - name: Record today's attendance as done
+        if: always() && steps.done.outputs.cache-hit != 'true' && hashFiles('attendance-done.txt') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: attendance-done.txt
+          key: attendance-done-${{ env.KST_DATE }}
 
       - name: Create Issue on Attendance Failure
         if: failure()
         run: |
           KST_TIME=$(TZ=Asia/Seoul date "+%Y-%m-%d %H:%M")
-          
-          TITLE="$KST_TIME 출석 체크 실패했습니다."
-          
+
+          if grep -q "ATTENDANCE_MISSED" attendance.log 2>/dev/null; then
+            # 출석 누락은 같은 날 여러 실행에서 감지될 수 있으므로 날짜별로 이슈 1건만 만든다.
+            TITLE="📅 ${KST_DATE} 출석 누락 — 출석 가능 시간(평일 06~11시) 안에 출석하지 못했습니다"
+            if gh issue list --state all --limit 100 --json title --jq '.[].title' | grep -qxF "$TITLE"; then
+              echo "이미 같은 날짜의 출석 누락 이슈가 있습니다: $TITLE"
+              exit 0
+            fi
+          else
+            TITLE="$KST_TIME 출석 체크 실패했습니다."
+          fi
+
           echo "### ⚠️ 출석 체크 실패" > issue_body.md
           echo "" >> issue_body.md
           echo "#### 📋 상세 실행 로그:" >> issue_body.md
@@ -68,7 +120,7 @@ jobs:
             echo "로그 파일을 찾을 수 없습니다." >> issue_body.md
           fi
           echo "\`\`\`" >> issue_body.md
-          
+
           gh issue create --title "$TITLE" --body-file issue_body.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
