@@ -1,6 +1,6 @@
 # 🌿 그린메이커 자동화 봇 (Green Maker Auto Bot)
 
-이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 6~11시 출석 가능 시간에 자동 출석체크**를, **평일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를 수행합니다. (월·수·금 요일별 자동 포스팅은 현재 **비활성화** 상태입니다.)
+이 프로젝트는 [그린메이커(green-office.uk)](https://green-office.uk/) 커뮤니티 활동을 자동화하기 위한 도구입니다. GitHub Actions 스케줄에 따라 **평일 오전 6~11시 출석 가능 시간에 자동 출석체크**를, **평일 오후 3시에는 물방울 뽑기(조건부 자동 응모)** 를, **금요일 오전 9시에는 동료 칭찬 포스팅**을 수행합니다. (월·수 포스팅은 현재 **비활성화** 상태입니다.)
 
 ---
 
@@ -12,7 +12,7 @@
 flowchart LR
     subgraph TRIGGER["⏰ 트리거 (GitHub Actions cron)"]
         A1["출석 워크플로우<br/>평일 01:07~09:17 KST 예약<br/>(06시 전 시작 시 대기)"]
-        A2["포스팅 워크플로우<br/>월·수·금 09:00 KST<br/>(현재 비활성)"]
+        A2["포스팅 워크플로우<br/>금 09:00 KST 동료 칭찬<br/>(월·수는 비활성)"]
         A3["뽑기 워크플로우<br/>평일 15:00 KST"]
     end
 
@@ -57,7 +57,7 @@ flowchart LR
 
 | 구성 요소 | 역할 | 관련 파일 |
 |-----------|------|-----------|
-| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | 활성: [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml) / 비활성: `auto-post-*.yml.disable` |
+| **트리거** | 정해진 시각에 봇을 실행하는 GitHub Actions 스케줄 (cron) | 활성: [`.github/workflows/auto-attendance.yml`](.github/workflows/auto-attendance.yml), [`.github/workflows/auto-lottery.yml`](.github/workflows/auto-lottery.yml), [`.github/workflows/auto-post-coworker-praise.yml`](.github/workflows/auto-post-coworker-praise.yml) / 비활성: `auto-post-proverb.yml.disable`, `auto-post-happy-message.yml.disable` |
 | **봇 엔진** | Playwright(스텔스)로 로그인·출석·포스팅·뽑기를 수행하는 핵심 로직 | [`bot.js`](bot.js), [`index.js`](index.js) |
 | **콘텐츠 소스** | 요일별 포스팅 글감 + 뽑기 응모 대상 + 출석·뽑기·포스팅 제외 공휴일 (명언·생활정보·동료 명단·응모 물품·공휴일·외부 API) | [`data/quotes.json`](data/quotes.json), [`data/life-tips.json`](data/life-tips.json), [`data/coworkers.txt`](data/coworkers.txt), [`data/lottery.json`](data/lottery.json), [`data/holidays.json`](data/holidays.json) |
 | **대상 사이트** | 실제 활동이 반영되는 그린메이커 커뮤니티 | [green-office.uk](https://green-office.uk/) |
@@ -69,7 +69,7 @@ flowchart LR
 
 - **자동 로그인**: 설정된 계정 정보를 사용하여 안전하게 접속합니다.
 - **매일 자동 출석체크 (평일 06:00~11:00 KST)**: `출근 완료!` 옵션으로 자동 출석체크를 완료합니다. GitHub 예약 실행이 몇 시간씩 늦어져도 출석하도록 01:07부터 여러 번 예약하고, 06시 전에 시작되면 06시까지 기다렸다가 출석합니다. 11시까지 출석하지 못한 날은 **"출석 누락" 이슈로 알려 줍니다.** **법정 공휴일(대체공휴일·선거일 포함)에는 출석을 시도하지 않습니다.**
-- **주간 자동 포스팅 (월·수·금 오전 9시) — ⛔ 현재 비활성화**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다. **법정 공휴일에는 포스팅하지 않습니다.**
+- **주간 자동 포스팅 (월·수·금 오전 9시) — 현재 금요일 동료 칭찬만 활성**: 요일별로 카테고리와 내용이 다른 글을 매주 자동으로 포스팅합니다. **법정 공휴일에는 포스팅하지 않습니다.**
 - **물방울 뽑기 조건부 자동 응모 (평일 오후 3시)**: `data/lottery.json`에 등록한 물품의 **당첨확률이 10% 이상일 때만** 자동으로 응모(뽑기)합니다. 1회 응모마다 물방울 30개가 차감됩니다.
 
 ---
@@ -110,10 +110,10 @@ flowchart LR
 
 ## 📅 주간 자동 포스팅 방식
 
-매주 **월·수·금 오전 9시(KST)** 에 포스팅이 실행되며, 요일마다 글의 출처와 "새로운 글을 가져오는 방식"이 다릅니다. (관련 로직: [`bot.js`](bot.js), 스케줄: `.github/workflows/auto-post-proverb.yml.disable`(월), `auto-post-happy-message.yml.disable`(수), `auto-post-coworker-praise.yml.disable`(금))
+매주 **월·수·금 오전 9시(KST)** 에 포스팅이 실행되며, 요일마다 글의 출처와 "새로운 글을 가져오는 방식"이 다릅니다. (관련 로직: [`bot.js`](bot.js), 스케줄: `.github/workflows/auto-post-proverb.yml.disable`(월), `auto-post-happy-message.yml.disable`(수), [`auto-post-coworker-praise.yml`](.github/workflows/auto-post-coworker-praise.yml)(금))
 
 > [!NOTE]
-> 현재 세 포스팅 워크플로우는 모두 **비활성화**(`.yml.disable`) 상태라 실행되지 않습니다. GitHub Actions는 `.yml`/`.yaml` 파일만 실행하므로, 다시 켜려면 원하는 파일 이름 끝의 `.disable`만 지우면 됩니다. (예: `auto-post-coworker-praise.yml.disable` → `auto-post-coworker-praise.yml`)
+> 현재 **금요일 동료 칭찬만 활성**이고, 월요일 명언·수요일 행복 한마디는 **비활성화**(`.yml.disable`) 상태라 실행되지 않습니다. GitHub Actions는 `.yml`/`.yaml` 파일만 실행하므로, 다시 켜려면 원하는 파일 이름 끝의 `.disable`만 지우면 됩니다. (예: `auto-post-proverb.yml.disable` → `auto-post-proverb.yml`)
 
 | 요일 | 카테고리 | 내용 | 출처 | 새 글을 가져오는 방식 | 중복 방지 |
 |------|----------|------|------|----------------------|-----------|
@@ -126,7 +126,7 @@ flowchart LR
 > - **월요일**은 `data/quotes.json`(명언+해설)을 주차 순환하므로 목록을 다 쓰기 전까지 중복이 없습니다. 명언을 추가하려면 `data/quotes.json`에 `{ "quote": "...", "author": "...", "profile": "...", "meaning": "..." }` 항목을 더 넣으면 순환 주기가 길어집니다.
 > - **금요일**은 `data/coworkers.txt`를 **위에서부터 순서대로 한 명씩** 칭찬합니다. 순번은 `data/coworker-rotation.json`의 기준일·기준 동료부터 **공휴일이 아닌 금요일만** 세어 정하므로, **금요일이 공휴일이면 그 주 차례인 동료는 다음 금요일로 넘어가고 아무도 건너뛰지 않습니다.** 해가 바뀌어도 순번이 처음으로 돌아가지 않습니다.
 >   ```json
->   { "anchorDate": "2026-10-16", "anchorName": "전희식" }
+>   { "anchorDate": "2026-10-30", "anchorName": "전희식" }
 >   ```
 >   "다음 칭찬을 특정 동료부터 다시 시작"하고 싶다면, `anchorDate`를 **직전 금요일**, `anchorName`을 **그 바로 앞 사람**으로 바꾸면 됩니다. 대상 동료를 늘리려면 `data/coworkers.txt`에 이름을 한 줄에 하나씩 추가하세요(추가한 자리에서 순번에 끼어듭니다).
 
@@ -302,7 +302,7 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 > 반드시 **Secrets** 탭에 등록해야 합니다. **Variables** 탭에 등록할 경우 보안상 위험하며, 일부 워크플로우에서 인식되지 않을 수 있습니다.
 
 ### Step 2: 스케줄 확인
-이미 다음 워크플로우 파일에 스케줄이 설정되어 있습니다. (활성 워크플로우는 `workflow_dispatch`로 수동 실행도 가능합니다.) **현재 자동 실행되는 것은 출석과 뽑기 두 가지뿐입니다.**
+이미 다음 워크플로우 파일에 스케줄이 설정되어 있습니다. (활성 워크플로우는 `workflow_dispatch`로 수동 실행도 가능합니다.) **현재 자동 실행되는 것은 출석, 뽑기, 금요일 동료 칭찬입니다.**
 
 | 워크플로우 | 실행 시각 (KST) | cron (UTC) | 동작 |
 |-----------|-----------------|------------|------|
@@ -310,7 +310,7 @@ GitHub 레포지토리 페이지에서 다음 설정을 수행합니다.
 | [`auto-lottery.yml`](.github/workflows/auto-lottery.yml) | 평일 오후 3시 | `0 6 * * 1-5` | 물방울 뽑기 조건부 자동 응모 (당첨확률 10%↑) |
 | `auto-post-proverb.yml.disable` ⛔ | (월 오전 9시) | `0 0 * * 1` | 명언 포스팅 — **비활성** |
 | `auto-post-happy-message.yml.disable` ⛔ | (수 오전 9시) | `0 0 * * 3` | 행복 한마디 포스팅 — **비활성** |
-| `auto-post-coworker-praise.yml.disable` ⛔ | (금 오전 9시) | `0 0 * * 5` | 동료 칭찬 포스팅 — **비활성** |
+| [`auto-post-coworker-praise.yml`](.github/workflows/auto-post-coworker-praise.yml) | 금 오전 9시 | `0 0 * * 5` | 동료 칭찬 포스팅 (공휴일 제외) |
 
 ---
 
